@@ -568,6 +568,37 @@ $nombre_video = htmlspecialchars($recurso['nombre']);
             #big-play { opacity: 0 !important; pointer-events: none !important; }
         }
 
+        /* ── Badge de estado de carga ──────────────────────────────── */
+        #vid-status {
+            position: absolute;
+            top: 14px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.58);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            color: rgba(255, 255, 255, 0.92);
+            font-size: 12px;
+            font-weight: 500;
+            padding: 5px 16px;
+            border-radius: 99px;
+            white-space: nowrap;
+            pointer-events: none;
+            z-index: 8;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            letter-spacing: 0.02em;
+            max-width: calc(100% - 28px);
+            text-align: center;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        #vid-status.visible { opacity: 1; }
+
+        @media (max-width: 600px) {
+            #vid-status { font-size: 11px; padding: 4px 12px; top: 10px; }
+        }
+
         /* ── Marca de agua ─────────────────────────────────────────── */
         #wm-overlay {
             position: absolute;
@@ -635,6 +666,10 @@ $nombre_video = htmlspecialchars($recurso['nombre']);
                 <span id="wm-clock"></span><br>
                 <span style="font-size:10px;font-weight:400;opacity:0.85;">Propiedad de F&amp;C CONSULTORES<br>Prohibida su venta o distribución</span>
             </div>
+        </div>
+
+        <div id="vid-status" role="status" aria-live="polite" aria-atomic="true">
+            <span id="vid-status-text"></span>
         </div>
 
         <button id="big-play" aria-label="Reproducir">
@@ -845,6 +880,33 @@ $nombre_video = htmlspecialchars($recurso['nombre']);
 
     // Block right-click on video element
     vid.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+    // ── Estado de carga ────────────────────────────────────────────────────
+    var statusEl    = document.getElementById('vid-status');
+    var statusText  = document.getElementById('vid-status-text');
+    var statusTimer;
+
+    function showStatus(msg) {
+        clearTimeout(statusTimer);
+        statusText.textContent = msg;
+        statusEl.classList.add('visible');
+    }
+
+    function hideStatus(delay) {
+        clearTimeout(statusTimer);
+        statusTimer = setTimeout(function () {
+            statusEl.classList.remove('visible');
+        }, delay !== undefined ? delay : 0);
+    }
+
+    vid.addEventListener('loadstart',      function () { showStatus('Preparando video…'); });
+    vid.addEventListener('loadedmetadata', function () { showStatus('Cargando información…'); });
+    vid.addEventListener('canplay',        function () { showStatus('Video listo para reproducir'); hideStatus(2500); });
+    vid.addEventListener('waiting',        function () { showStatus('Cargando más contenido…'); });
+    vid.addEventListener('playing',        function () { hideStatus(900); });
+    vid.addEventListener('error',          function () { showStatus('No se pudo cargar el video.'); });
+
+    showStatus('Preparando video…');
 
     // ── Marca de agua ─────────────────────────────────────────────────────────
     var wmEl = document.getElementById('wm-text');
