@@ -1,0 +1,24 @@
+# ── Configuración local con credenciales ────────────────────────────────────
+db.php
+.env
+.php-ini
+
+# ── Archivos subidos por usuarios (binarios, PDFs, videos, etc.) ─────────────
+uploads/
+
+# ── Librería de tercero incluida manualmente ─────────────────────────────────
+libs/
+
+# ── Dumps / exportaciones de base de datos ──────────────────────────────────
+*.sql
+*.zip
+*.bak
+
+# ── Sistema operativo ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDEs y editores ──────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-workspace
