@@ -1,0 +1,9 @@
+# ================================================================
+#  Carpeta de videos privados — recursosfyc
+#  Apache 2.4+
+#
+#  Deniega TODO acceso HTTP directo.
+#  Los videos se sirven exclusivamente mediante video.php (PHP).
+# ================================================================
+
+Require all denied

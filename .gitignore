@@ -6,6 +6,15 @@ db.php
 # ── Archivos subidos por usuarios (binarios, PDFs, videos, etc.) ─────────────
 uploads/
 
+# ── Videos privados — excluir binarios, conservar .htaccess y .gitkeep ───────
+private_videos/*.mp4
+private_videos/*.webm
+private_videos/*.ogg
+private_videos/*.mov
+private_videos/*.avi
+private_videos/*.mkv
+private_videos/*.m4v
+
 # ── Librería de tercero incluida manualmente ─────────────────────────────────
 libs/
 

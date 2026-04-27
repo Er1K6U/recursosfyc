@@ -161,10 +161,9 @@ if (isset($_GET['logout'])) {
     exit;
 }
 
-// Crear carpeta uploads si no existe
-if (!file_exists('uploads')) {
-    mkdir('uploads', 0755, true);
-}
+// Crear carpetas si no existen
+if (!file_exists('uploads'))        { mkdir('uploads',        0755, true); }
+if (!file_exists('private_videos')) { mkdir('private_videos', 0755, true); }
 
 $mensaje   = '';
 $error_msg = '';
@@ -359,7 +358,7 @@ if ($tab === 'recursos') {
                 if (!in_array($ext, $ext_permitidas)) {
                     $_SESSION['flash']['err'] = 'Tipo de archivo no permitido. Use: ' . implode(', ', $ext_permitidas);
                 } else {
-                    $destino = 'uploads/' . $nombre_archivo;
+                    $destino = 'private_videos/' . $nombre_archivo;
                     if (move_uploaded_file($_FILES['archivo_video']['tmp_name'], $destino)) {
                         $stmt = $pdo->prepare("INSERT INTO recursos (nombre, descripcion, archivo, tipo, es_video, ruta_video, video_expira_horas) VALUES (?, ?, ?, ?, 1, ?, ?)");
                         $stmt->execute([$nom, $desc, $nombre_archivo, $ext, $nombre_archivo, $horas]);
@@ -423,8 +422,11 @@ if ($tab === 'recursos') {
         $r = $pdo->prepare("SELECT archivo FROM recursos WHERE id=?");
         $r->execute([$id]);
         $rec = $r->fetch();
-        if ($rec && file_exists('uploads/' . basename($rec['archivo']))) {
-            unlink('uploads/' . basename($rec['archivo']));
+        if ($rec) {
+            $fn = basename($rec['archivo']);
+            foreach (['private_videos/', 'uploads/'] as $dir) {
+                if (file_exists($dir . $fn)) { unlink($dir . $fn); break; }
+            }
         }
         $pdo->prepare("DELETE FROM recursos WHERE id=?")->execute([$id]);
         $_SESSION['flash']['ok'] = 'Recurso eliminado.';

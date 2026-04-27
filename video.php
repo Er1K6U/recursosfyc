@@ -203,8 +203,10 @@ if (!$stmt_perm->fetch()) {
     exit;
 }
 
-$ruta    = !empty($recurso['ruta_video']) ? $recurso['ruta_video'] : $recurso['archivo'];
-$archivo = 'uploads/' . basename($ruta);
+$ruta = !empty($recurso['ruta_video']) ? $recurso['ruta_video'] : $recurso['archivo'];
+$fn   = basename($ruta);
+// Buscar primero en carpeta privada; fallback a uploads/ para videos anteriores
+$archivo = file_exists('private_videos/' . $fn) ? 'private_videos/' . $fn : 'uploads/' . $fn;
 if (!file_exists($archivo)) {
     http_response_code(404);
     renderError(
