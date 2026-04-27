@@ -333,51 +333,81 @@ if ($tab === 'recursos') {
 
     // Agregar video restringido con caducidad
     if (isset($_POST['agregar_video'])) {
-        $nom   = trim($_POST['nombre_video'] ?? '');
-        $desc  = trim($_POST['descripcion_video'] ?? '');
-        $url   = trim($_POST['url_video'] ?? '');
-        $horas = max(1, (int) ($_POST['video_expira_horas'] ?? 4));
+        $nom            = trim($_POST['nombre_video'] ?? '');
+        $desc           = trim($_POST['descripcion_video'] ?? '');
+        $video_url      = trim($_POST['url_video'] ?? '');
+        $video_existente = trim($_POST['video_existente'] ?? '');
+        $horas          = max(1, (int) ($_POST['video_expira_horas'] ?? 4));
 
-        if ($nom) {
-            if (!empty($url)) {
-                $stmt = $pdo->prepare("INSERT INTO recursos (nombre, descripcion, archivo, tipo, url_externa, es_video, ruta_video, video_expira_horas) VALUES (?, ?, 'externo_video', 'video', ?, 1, ?, ?)");
-                $stmt->execute([$nom, $desc, $url, $url, $horas]);
-                $nuevo_id      = (int) $pdo->lastInsertId();
-                $seleccionados = array_map('intval', $_POST['participantes_video'] ?? []);
-                if ($nuevo_id && $seleccionados) {
-                    $ins_perm = $pdo->prepare("INSERT IGNORE INTO recurso_permisos_video (recurso_id, participante_id) VALUES (?, ?)");
-                    foreach ($seleccionados as $pid) {
-                        if ($pid > 0) $ins_perm->execute([$nuevo_id, $pid]);
-                    }
+        error_log("VIDEO EXISTENTE: " . $video_existente);
+
+        $seleccionados = array_map('intval', $_POST['participantes_video'] ?? []);
+
+        if (!$nom) {
+            $_SESSION['flash']['err'] = 'El nombre del video es obligatorio.';
+        } elseif (!empty($video_url)) {
+            // ── Opción 1: URL externa ─────────────────────────────────────────
+            $stmt = $pdo->prepare("INSERT INTO recursos (nombre, descripcion, archivo, tipo, url_externa, es_video, ruta_video, video_expira_horas) VALUES (?, ?, 'externo_video', 'video', ?, 1, ?, ?)");
+            $stmt->execute([$nom, $desc, $video_url, $video_url, $horas]);
+            $nuevo_id = (int) $pdo->lastInsertId();
+            if ($nuevo_id && $seleccionados) {
+                $ins_perm = $pdo->prepare("INSERT IGNORE INTO recurso_permisos_video (recurso_id, participante_id) VALUES (?, ?)");
+                foreach ($seleccionados as $pid) {
+                    if ($pid > 0) $ins_perm->execute([$nuevo_id, $pid]);
                 }
-                $_SESSION['flash']['ok'] = 'Video externo agregado correctamente.';
-            } elseif (isset($_FILES['archivo_video']) && $_FILES['archivo_video']['error'] === 0) {
-                $ext_permitidas = ['mp4', 'webm', 'ogg', 'mov', 'avi', 'mkv', 'm4v'];
-                $nombre_archivo = time() . '_' . basename($_FILES['archivo_video']['name']);
-                $ext            = strtolower(pathinfo($nombre_archivo, PATHINFO_EXTENSION));
-                if (!in_array($ext, $ext_permitidas)) {
-                    $_SESSION['flash']['err'] = 'Tipo de archivo no permitido. Use: ' . implode(', ', $ext_permitidas);
-                } else {
-                    $destino = 'private_videos/' . $nombre_archivo;
-                    if (move_uploaded_file($_FILES['archivo_video']['tmp_name'], $destino)) {
-                        $stmt = $pdo->prepare("INSERT INTO recursos (nombre, descripcion, archivo, tipo, es_video, ruta_video, video_expira_horas) VALUES (?, ?, ?, ?, 1, ?, ?)");
-                        $stmt->execute([$nom, $desc, $nombre_archivo, $ext, $nombre_archivo, $horas]);
-                        $nuevo_id      = (int) $pdo->lastInsertId();
-                        $seleccionados = array_map('intval', $_POST['participantes_video'] ?? []);
-                        if ($nuevo_id && $seleccionados) {
-                            $ins_perm = $pdo->prepare("INSERT IGNORE INTO recurso_permisos_video (recurso_id, participante_id) VALUES (?, ?)");
-                            foreach ($seleccionados as $pid) {
-                                if ($pid > 0) $ins_perm->execute([$nuevo_id, $pid]);
-                            }
-                        }
-                        $_SESSION['flash']['ok'] = 'Video agregado correctamente.';
-                    }
-                }
+            }
+            $_SESSION['flash']['ok'] = 'Video externo agregado correctamente.';
+        } elseif (isset($_FILES['video_archivo']) && $_FILES['video_archivo']['error'] === 0) {
+            // ── Opción 2: Subida desde navegador ─────────────────────────────
+            $ext_permitidas = ['mp4', 'webm', 'ogg', 'mov', 'avi', 'mkv', 'm4v'];
+            $nombre_archivo = time() . '_' . basename($_FILES['video_archivo']['name']);
+            $ext            = strtolower(pathinfo($nombre_archivo, PATHINFO_EXTENSION));
+            if (!in_array($ext, $ext_permitidas)) {
+                $_SESSION['flash']['err'] = 'Tipo de archivo no permitido. Use: ' . implode(', ', $ext_permitidas);
             } else {
-                $_SESSION['flash']['err'] = 'Debes subir un archivo de video o ingresar una URL.';
+                $destino = 'private_videos/' . $nombre_archivo;
+                if (move_uploaded_file($_FILES['video_archivo']['tmp_name'], $destino)) {
+                    $stmt = $pdo->prepare("INSERT INTO recursos (nombre, descripcion, archivo, tipo, es_video, ruta_video, video_expira_horas) VALUES (?, ?, ?, ?, 1, ?, ?)");
+                    $stmt->execute([$nom, $desc, $nombre_archivo, $ext, $nombre_archivo, $horas]);
+                    $nuevo_id = (int) $pdo->lastInsertId();
+                    if ($nuevo_id && $seleccionados) {
+                        $ins_perm = $pdo->prepare("INSERT IGNORE INTO recurso_permisos_video (recurso_id, participante_id) VALUES (?, ?)");
+                        foreach ($seleccionados as $pid) {
+                            if ($pid > 0) $ins_perm->execute([$nuevo_id, $pid]);
+                        }
+                    }
+                    $_SESSION['flash']['ok'] = 'Video agregado correctamente.';
+                } else {
+                    $_SESSION['flash']['err'] = 'Error al mover el archivo subido.';
+                }
+            }
+        } elseif ($video_existente !== '') {
+            // ── Opción 3: Archivo ya en private_videos/ (subido por FTP) ─────
+            $nombre_archivo = basename($video_existente);
+            if ($nombre_archivo === '' || $nombre_archivo !== $video_existente) {
+                $_SESSION['flash']['err'] = 'Nombre de archivo inválido. Escribe solo el nombre sin ruta (ej: clase1.mp4).';
+            } else {
+                $ext            = strtolower(pathinfo($nombre_archivo, PATHINFO_EXTENSION));
+                $ext_permitidas = ['mp4', 'webm', 'mov', 'm4v'];
+                if (!in_array($ext, $ext_permitidas)) {
+                    $_SESSION['flash']['err'] = 'Extensión no permitida. Use: ' . implode(', ', $ext_permitidas);
+                } elseif (!file_exists('private_videos/' . $nombre_archivo)) {
+                    $_SESSION['flash']['err'] = "El archivo '{$nombre_archivo}' no existe en private_videos/.";
+                } else {
+                    $stmt = $pdo->prepare("INSERT INTO recursos (nombre, descripcion, archivo, tipo, es_video, ruta_video, video_expira_horas) VALUES (?, ?, ?, ?, 1, ?, ?)");
+                    $stmt->execute([$nom, $desc, $nombre_archivo, $ext, $nombre_archivo, $horas]);
+                    $nuevo_id = (int) $pdo->lastInsertId();
+                    if ($nuevo_id && $seleccionados) {
+                        $ins_perm = $pdo->prepare("INSERT IGNORE INTO recurso_permisos_video (recurso_id, participante_id) VALUES (?, ?)");
+                        foreach ($seleccionados as $pid) {
+                            if ($pid > 0) $ins_perm->execute([$nuevo_id, $pid]);
+                        }
+                    }
+                    $_SESSION['flash']['ok'] = 'Video registrado correctamente (archivo existente en private_videos/).';
+                }
             }
         } else {
-            $_SESSION['flash']['err'] = 'El nombre del video es obligatorio.';
+            $_SESSION['flash']['err'] = 'Debes subir un archivo, ingresar una URL o escribir el nombre de un archivo existente en private_videos/.';
         }
         header('Location: admin.php?tab=recursos');
         exit;
@@ -1162,17 +1192,24 @@ if ($tab === 'password') {
                     </div>
 
                     <div class="form-section">
-                        <div class="form-section-title">📁 Fuente del video</div>
-                        <div class="form-row" style="margin-bottom:0;">
+                        <div class="form-section-title">📁 Fuente del video <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#9ca3af;">(elige una de las tres opciones)</span></div>
+                        <div class="form-row" style="margin-bottom:12px;">
                             <div class="field">
-                                <label>Archivo de video (MP4, WebM, MOV…)</label>
-                                <input type="file" name="archivo_video" accept=".mp4,.webm,.ogg,.mov,.avi,.mkv,.m4v">
-                                <p style="font-size:12px;color:#999;margin-top:4px;">Déjalo vacío si usas URL externa.</p>
+                                <label>① Subir archivo desde el navegador</label>
+                                <input type="file" name="video_archivo" accept=".mp4,.webm,.ogg,.mov,.avi,.mkv,.m4v">
+                                <p style="font-size:12px;color:#999;margin-top:4px;">Para videos pequeños (&lt;50 MB aprox.).</p>
                             </div>
                             <div class="field">
-                                <label>O URL externa del video</label>
+                                <label>② URL externa del video</label>
                                 <input type="text" name="url_video" placeholder="https://...">
-                                <p style="font-size:12px;color:#999;margin-top:4px;">Déjala vacía si subes archivo.</p>
+                                <p style="font-size:12px;color:#999;margin-top:4px;">Déjala vacía si usas archivo o FTP.</p>
+                            </div>
+                        </div>
+                        <div style="border-top:1px dashed #e5e7eb;padding-top:12px;">
+                            <div class="field" style="margin-bottom:0;">
+                                <label>③ Nombre de archivo ya subido por FTP a <code style="font-size:12px;background:#f3f4f6;padding:1px 5px;border-radius:4px;">private_videos/</code></label>
+                                <input type="text" name="video_existente" placeholder="Ej: clase1_gestion_riesgos.mp4" style="font-family:monospace;">
+                                <p style="font-size:12px;color:#999;margin-top:4px;">Solo el nombre del archivo con su extensión. El archivo debe existir en <code>private_videos/</code> antes de guardar.</p>
                             </div>
                         </div>
                     </div>

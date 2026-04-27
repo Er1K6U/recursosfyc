@@ -23,6 +23,11 @@ libs/
 *.zip
 *.bak
 
+# ── Migraciones versionadas — excepción explícita ───────────────────────────
+!database/
+!database/migrations/
+!database/migrations/*.sql
+
 # ── Sistema operativo ────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
