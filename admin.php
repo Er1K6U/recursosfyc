@@ -1198,8 +1198,9 @@ if ($tab === 'password') {
                         <div class="form-row" style="margin-bottom:12px;">
                             <div class="field">
                                 <label>① Subir archivo desde el navegador</label>
-                                <input type="file" name="video_archivo" accept=".mp4,.webm,.ogg,.mov,.avi,.mkv,.m4v">
-                                <p style="font-size:12px;color:#999;margin-top:4px;">Para videos pequeños (&lt;50 MB aprox.).</p>
+                                <input type="file" name="video_archivo" id="video_archivo_input" accept=".mp4,.webm,.ogg,.mov,.avi,.mkv,.m4v">
+                                <p style="font-size:12px;color:#d97706;margin-top:4px;font-weight:500;">⚠ Solo para archivos pequeños. Si el video pesa más de 16&nbsp;MB, súbelo por FTP/SFTP a <code>private_videos/</code> y selecciónalo con la opción ③.</p>
+                                <p id="video_archivo_error" style="display:none;font-size:12px;color:#dc2626;margin-top:4px;font-weight:600;"></p>
                             </div>
                             <div class="field">
                                 <label>② URL externa del video</label>
@@ -1209,9 +1210,26 @@ if ($tab === 'password') {
                         </div>
                         <div style="border-top:1px dashed #e5e7eb;padding-top:12px;">
                             <div class="field" style="margin-bottom:0;">
-                                <label>③ Nombre de archivo ya subido por FTP a <code style="font-size:12px;background:#f3f4f6;padding:1px 5px;border-radius:4px;">private_videos/</code></label>
-                                <input type="text" name="video_existente" placeholder="Ej: clase1_gestion_riesgos.mp4" style="font-family:monospace;">
-                                <p style="font-size:12px;color:#999;margin-top:4px;">Solo el nombre del archivo con su extensión. El archivo debe existir en <code>private_videos/</code> antes de guardar.</p>
+                                <label>③ Seleccionar archivo ya subido por FTP a <code style="font-size:12px;background:#f3f4f6;padding:1px 5px;border-radius:4px;">private_videos/</code></label>
+                                <input type="hidden" name="video_existente" id="video_existente_input">
+                                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">
+                                    <button type="button" onclick="abrirModalVideos()"
+                                            style="display:inline-flex;align-items:center;gap:7px;padding:9px 16px;
+                                                   background:#1d4ed8;color:white;border:none;border-radius:8px;
+                                                   font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                                             fill="none" stroke="currentColor" stroke-width="2.5"
+                                             stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                                        </svg>
+                                        Seleccionar video desde servidor
+                                    </button>
+                                    <span id="video-seleccionado-texto"
+                                          style="font-size:13px;color:#6b7280;font-style:italic;">
+                                        Ningún archivo seleccionado
+                                    </span>
+                                </div>
+                                <p style="font-size:12px;color:#999;margin-top:0;">Solo se listan archivos <code>.mp4</code> presentes en <code>private_videos/</code>.</p>
                             </div>
                         </div>
                     </div>
@@ -1426,6 +1444,24 @@ if ($tab === 'password') {
                             </button>
                         </div>
                     </form>
+                </div>
+            </div>
+
+            <!-- Modal: selector de videos desde servidor -->
+            <div class="modal-overlay" id="modal-videos-servidor">
+                <div class="modal" style="max-width:580px;">
+                    <h4 style="color:#1d4ed8;">📁 Videos disponibles en el servidor</h4>
+                    <p style="font-size:13px;color:#6b7280;margin-bottom:14px;">
+                        Archivos <code>.mp4</code> en <code>private_videos/</code>, ordenados del más reciente al más antiguo.
+                    </p>
+                    <div id="modal-videos-lista"
+                         style="border:1px solid #e5e7eb;border-radius:8px;max-height:340px;overflow-y:auto;
+                                padding:0 12px;background:#f9fafb;">
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn" style="background:#eee;color:#333;"
+                                onclick="cerrarModal('modal-videos-servidor')">Cerrar</button>
+                    </div>
                 </div>
             </div>
 
@@ -1725,6 +1761,91 @@ if ($tab === 'password') {
             function cerrarModal(id) {
                 document.getElementById(id).classList.remove('open');
             }
+
+            function abrirModalVideos() {
+                var lista = document.getElementById('modal-videos-lista');
+                lista.innerHTML = '<p style="color:#6b7280;font-size:13px;text-align:center;padding:24px 0;">Cargando lista de videos…</p>';
+                document.getElementById('modal-videos-servidor').classList.add('open');
+                fetch('ajax_list_videos.php')
+                    .then(function (r) {
+                        if (!r.ok) throw new Error('HTTP ' + r.status);
+                        return r.json();
+                    })
+                    .then(function (data) {
+                        if (!Array.isArray(data) || data.length === 0) {
+                            lista.innerHTML = '<p style="color:#9ca3af;font-size:13px;text-align:center;padding:24px 0;">'
+                                + 'No se encontraron archivos .mp4 en <code>private_videos/</code>.</p>';
+                            return;
+                        }
+                        var esc = function (s) {
+                            return String(s)
+                                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                        };
+                        lista.innerHTML = data.map(function (v) {
+                            return '<div style="display:flex;justify-content:space-between;align-items:center;'
+                                 + 'padding:10px 0;border-bottom:1px solid #f0f0f0;">'
+                                 + '<div style="min-width:0;flex:1;">'
+                                 + '<div style="font-size:13px;font-weight:600;color:#111827;word-break:break-all;">'
+                                 + esc(v.nombre) + '</div>'
+                                 + '<div style="font-size:11px;color:#9ca3af;margin-top:2px;">' + esc(v.size_mb) + '</div>'
+                                 + '</div>'
+                                 + '<button type="button" class="btn-sel-video"'
+                                 + ' data-nombre="' + esc(v.nombre) + '" data-mb="' + esc(v.size_mb) + '"'
+                                 + ' style="flex-shrink:0;margin-left:14px;padding:6px 16px;background:#1d4ed8;'
+                                 + 'color:white;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">'
+                                 + 'Seleccionar</button>'
+                                 + '</div>';
+                        }).join('');
+                        lista.querySelectorAll('.btn-sel-video').forEach(function (btn) {
+                            btn.addEventListener('click', function () {
+                                seleccionarVideo(this.dataset.nombre, this.dataset.mb);
+                            });
+                        });
+                    })
+                    .catch(function () {
+                        lista.innerHTML = '<p style="color:#dc2626;font-size:13px;text-align:center;padding:24px 0;">'
+                            + 'Error al cargar la lista. Intenta de nuevo.</p>';
+                    });
+            }
+
+            function seleccionarVideo(nombre, sizeMb) {
+                document.getElementById('video_existente_input').value = nombre;
+                var display = document.getElementById('video-seleccionado-texto');
+                display.textContent = 'Seleccionado: ' + nombre + ' (' + sizeMb + ')';
+                display.style.color       = '#059669';
+                display.style.fontStyle   = 'normal';
+                display.style.fontWeight  = '600';
+                cerrarModal('modal-videos-servidor');
+            }
+
+            // Validación de tamaño al seleccionar archivo para subida directa
+            (function () {
+                var inp   = document.getElementById('video_archivo_input');
+                var errEl = document.getElementById('video_archivo_error');
+                if (!inp || !errEl) return;
+                var form = inp.closest('form');
+                inp.addEventListener('change', function () {
+                    if (inp.files.length && inp.files[0].size > 16 * 1024 * 1024) {
+                        errEl.textContent = 'Archivo demasiado grande ('
+                            + (inp.files[0].size / 1048576).toFixed(1)
+                            + ' MB). Súbelo por FTP y selecciónalo con la opción ③.';
+                        errEl.style.display = 'block';
+                    } else {
+                        errEl.style.display = 'none';
+                    }
+                });
+                if (form) {
+                    form.addEventListener('submit', function (e) {
+                        if (inp.files.length && inp.files[0].size > 16 * 1024 * 1024) {
+                            e.preventDefault();
+                            errEl.textContent = 'El archivo es demasiado grande para subir desde el navegador. Usa la opción ③.';
+                            errEl.style.display = 'block';
+                            inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    });
+                }
+            }());
 
             // Cerrar modal al hacer clic fuera
             document.querySelectorAll('.modal-overlay').forEach(overlay => {
