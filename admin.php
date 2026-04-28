@@ -169,6 +169,11 @@ $mensaje   = '';
 $error_msg = '';
 $tab       = $_GET['tab'] ?? 'participantes';
 
+function av_mmss(int $s): string {
+    if ($s <= 0) return '—';
+    return sprintf('%d:%02d', intdiv($s, 60), $s % 60);
+}
+
 if (!empty($_SESSION['flash']['ok']))  { $mensaje   = $_SESSION['flash']['ok'];  unset($_SESSION['flash']['ok']);  }
 if (!empty($_SESSION['flash']['err'])) { $error_msg = $_SESSION['flash']['err']; unset($_SESSION['flash']['err']); }
 
@@ -538,6 +543,57 @@ if ($tab === 'logs') {
     ")->fetchAll();
 }
 
+// ===================== ANALYTICS VIDEOS =====================
+if ($tab === 'analytics_videos') {
+    $av_recursos = $pdo->query("
+        SELECT id, nombre FROM recursos WHERE es_video = 1 ORDER BY nombre ASC
+    ")->fetchAll();
+
+    $av_participantes = $pdo->query("
+        SELECT id, nombre, documento FROM participantes ORDER BY nombre ASC
+    ")->fetchAll();
+
+    $av_f_recurso      = isset($_GET['f_recurso'])      ? (int) $_GET['f_recurso']      : 0;
+    $av_f_participante = isset($_GET['f_participante']) ? (int) $_GET['f_participante'] : 0;
+    $av_f_estado       = in_array($_GET['f_estado'] ?? '', ['completado', 'en_progreso'], true)
+                             ? $_GET['f_estado'] : '';
+
+    $av_where  = [];
+    $av_params = [];
+
+    if ($av_f_recurso > 0) {
+        $av_where[]  = 'vv.recurso_id = ?';
+        $av_params[] = $av_f_recurso;
+    }
+    if ($av_f_participante > 0) {
+        $av_where[]  = 'vv.participante_id = ?';
+        $av_params[] = $av_f_participante;
+    }
+    if ($av_f_estado === 'completado') {
+        $av_where[] = 'vv.completed = 1';
+    } elseif ($av_f_estado === 'en_progreso') {
+        $av_where[] = 'vv.completed = 0';
+    }
+
+    $av_sql = "
+        SELECT vv.started_at, vv.last_seen_at,
+               vv.seconds_watched, vv.video_duration, vv.percent_watched, vv.completed,
+               p.nombre  AS p_nombre,  p.documento AS p_documento,
+               r.nombre  AS r_nombre
+        FROM   video_visualizaciones vv
+        JOIN   participantes p ON p.id = vv.participante_id
+        JOIN   recursos      r ON r.id = vv.recurso_id
+    ";
+    if ($av_where) {
+        $av_sql .= ' WHERE ' . implode(' AND ', $av_where);
+    }
+    $av_sql .= ' ORDER BY vv.last_seen_at DESC, vv.started_at DESC LIMIT 500';
+
+    $av_stmt = $pdo->prepare($av_sql);
+    $av_stmt->execute($av_params);
+    $av_rows = $av_stmt->fetchAll();
+}
+
 // ===================== CAMBIAR PASSWORD =====================
 if ($tab === 'password') {
     if (isset($_POST['cambiar_password'])) {
@@ -817,6 +873,11 @@ if ($tab === 'password') {
             color: #721c24;
         }
 
+        .badge-warn {
+            background: #fff3cd;
+            color: #856404;
+        }
+
         .accion-login {
             color: #2980b9;
             font-weight: 600;
@@ -996,6 +1057,7 @@ if ($tab === 'password') {
         <a href="admin.php?tab=recursos" class="<?= $tab === 'recursos' ? 'active' : '' ?>">📦 Recursos</a>
         <a href="admin.php?tab=certificados" class="<?= $tab === 'certificados' ? 'active' : '' ?>">🎓 Certificados</a>
         <a href="admin.php?tab=logs" class="<?= $tab === 'logs' ? 'active' : '' ?>">📋 Accesos y Descargas</a>
+        <a href="admin.php?tab=analytics_videos" class="<?= $tab === 'analytics_videos' ? 'active' : '' ?>">📊 Analytics Videos</a>
         <a href="admin.php?tab=configuracion" class="<?= $tab === 'configuracion' ? 'active' : '' ?>">🎨
             Configuración</a>
         <a href="admin.php?tab=password" class="<?= $tab === 'password' ? 'active' : '' ?>">🔑 Contraseña</a>
@@ -1678,6 +1740,131 @@ if ($tab === 'password') {
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- ============ TAB ANALYTICS VIDEOS ============ -->
+            <?php elseif ($tab === 'analytics_videos'): ?>
+
+                <div class="card">
+                    <h3>📊 Analytics de visualización de videos</h3>
+
+                    <form method="GET" action="admin.php" style="margin-bottom:18px;">
+                        <input type="hidden" name="tab" value="analytics_videos">
+                        <div class="form-row" style="align-items:flex-end;flex-wrap:wrap;">
+                            <div class="field">
+                                <label>Video</label>
+                                <select name="f_recurso">
+                                    <option value="0">— Todos los videos —</option>
+                                    <?php foreach ($av_recursos as $rv): ?>
+                                        <option value="<?= (int) $rv['id'] ?>"
+                                            <?= $av_f_recurso === (int) $rv['id'] ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($rv['nombre']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="field">
+                                <label>Participante</label>
+                                <select name="f_participante">
+                                    <option value="0">— Todos —</option>
+                                    <?php foreach ($av_participantes as $pv): ?>
+                                        <option value="<?= (int) $pv['id'] ?>"
+                                            <?= $av_f_participante === (int) $pv['id'] ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($pv['nombre']) ?>
+                                            (<?= htmlspecialchars($pv['documento']) ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="field" style="max-width:180px;">
+                                <label>Estado</label>
+                                <select name="f_estado">
+                                    <option value="" <?= $av_f_estado === '' ? 'selected' : '' ?>>— Todos —</option>
+                                    <option value="completado" <?= $av_f_estado === 'completado' ? 'selected' : '' ?>>Completado</option>
+                                    <option value="en_progreso" <?= $av_f_estado === 'en_progreso' ? 'selected' : '' ?>>En progreso</option>
+                                </select>
+                            </div>
+                            <div class="field" style="max-width:120px;">
+                                <label>&nbsp;</label>
+                                <button type="submit" class="btn btn-primary" style="width:100%;">Filtrar</button>
+                            </div>
+                            <?php if ($av_f_recurso || $av_f_participante || $av_f_estado !== ''): ?>
+                            <div class="field" style="max-width:120px;">
+                                <label>&nbsp;</label>
+                                <a href="admin.php?tab=analytics_videos"
+                                   class="btn"
+                                   style="background:#f3f4f6;color:#374151;width:100%;display:inline-block;text-align:center;text-decoration:none;">
+                                    Limpiar
+                                </a>
+                            </div>
+                            <?php endif; ?>
+                        </div>
+                    </form>
+
+                    <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
+                        <?= count($av_rows) ?> registro<?= count($av_rows) !== 1 ? 's' : '' ?>
+                        <?= ($av_f_recurso || $av_f_participante || $av_f_estado !== '') ? ' (filtrado)' : '' ?>
+                    </p>
+
+                    <div style="overflow-x:auto;">
+                        <table id="tabla-av">
+                            <thead>
+                                <tr>
+                                    <th>Participante</th>
+                                    <th>Documento</th>
+                                    <th>Video</th>
+                                    <th>Inicio</th>
+                                    <th>Última actividad</th>
+                                    <th>Tiempo visto</th>
+                                    <th>Duración</th>
+                                    <th>% Visto</th>
+                                    <th>Estado</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if (empty($av_rows)): ?>
+                                    <tr>
+                                        <td colspan="9"
+                                            style="text-align:center;color:#999;padding:28px;">
+                                            Sin registros de visualización
+                                        </td>
+                                    </tr>
+                                <?php else: ?>
+                                    <?php foreach ($av_rows as $avr): ?>
+                                        <tr>
+                                            <td><?= htmlspecialchars($avr['p_nombre']) ?></td>
+                                            <td><?= htmlspecialchars($avr['p_documento']) ?></td>
+                                            <td><?= htmlspecialchars($avr['r_nombre']) ?></td>
+                                            <td>
+                                                <?= $avr['started_at']
+                                                    ? date('d/m/Y H:i', strtotime($avr['started_at']))
+                                                    : '—' ?>
+                                            </td>
+                                            <td>
+                                                <?= $avr['last_seen_at']
+                                                    ? date('d/m/Y H:i', strtotime($avr['last_seen_at']))
+                                                    : '—' ?>
+                                            </td>
+                                            <td><?= av_mmss((int) $avr['seconds_watched']) ?></td>
+                                            <td><?= av_mmss((int) $avr['video_duration']) ?></td>
+                                            <td>
+                                                <?= (int) $avr['video_duration'] > 0
+                                                    ? round((float) $avr['percent_watched'] * 100, 1) . '%'
+                                                    : '—' ?>
+                                            </td>
+                                            <td>
+                                                <?php if ((int) $avr['completed'] === 1): ?>
+                                                    <span class="badge badge-ok">✓ Completado</span>
+                                                <?php else: ?>
+                                                    <span class="badge badge-warn">⏳ En progreso</span>
+                                                <?php endif; ?>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
                             </tbody>
                         </table>
                     </div>
