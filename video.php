@@ -1129,6 +1129,67 @@ $expira_ts    = strtotime($tv['expira_en']);   // timestamp UNIX hora Colombia
 
     actualizarExpira();
     setInterval(actualizarExpira, 1000);
+
+    // ── Analytics de visualización ──────────────────────────────────────────
+    var _hbToken   = <?= json_encode($token) ?>;
+    var _playStart = null;
+    var _swAccum   = 0;
+
+    function _getSecWatched() {
+        if (_playStart !== null) {
+            return _swAccum + (Date.now() - _playStart) / 1000;
+        }
+        return _swAccum;
+    }
+
+    function _sendHb(event) {
+        var body = new URLSearchParams({
+            token:           _hbToken,
+            event:           event,
+            duration:        (vid.duration > 0 ? vid.duration : 0).toFixed(1),
+            seconds_watched: _getSecWatched().toFixed(1)
+        });
+        fetch('video_heartbeat.php', {
+            method: 'POST', body: body, credentials: 'same-origin'
+        }).catch(function () {});
+    }
+
+    vid.addEventListener('play', function () {
+        _playStart = Date.now();
+        _sendHb('play');
+    });
+
+    vid.addEventListener('pause', function () {
+        if (_playStart !== null) {
+            _swAccum += (Date.now() - _playStart) / 1000;
+            _playStart = null;
+        }
+        _sendHb('heartbeat');
+    });
+
+    vid.addEventListener('ended', function () {
+        if (_playStart !== null) {
+            _swAccum += (Date.now() - _playStart) / 1000;
+            _playStart = null;
+        }
+        // Enviar vid.duration como seconds_watched — el servidor forzará valores completos.
+        var dur = vid.duration > 0 ? vid.duration : 0;
+        var body = new URLSearchParams({
+            token:           _hbToken,
+            event:           'ended',
+            duration:        dur.toFixed(1),
+            seconds_watched: dur.toFixed(1)
+        });
+        fetch('video_heartbeat.php', {
+            method: 'POST', body: body, credentials: 'same-origin'
+        }).catch(function () {});
+    });
+
+    setInterval(function () {
+        if (!vid.paused && !vid.ended && vid.readyState >= 2) {
+            _sendHb('heartbeat');
+        }
+    }, 15000);
 }());
 </script>
 
