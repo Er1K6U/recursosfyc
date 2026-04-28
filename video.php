@@ -2,6 +2,8 @@
 session_start();
 require_once 'db.php';
 
+date_default_timezone_set('America/Bogota');
+
 define('VIDEO_EXPIRACION_HORAS', 4);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -93,6 +95,131 @@ function renderError(string $titulo, string $mensaje, string $btn_texto, string 
     <?php
 }
 
+function renderAccesoAgotado(array $tv): void
+{
+    $fecha_acceso = date('d/m/Y \a \l\a\s H:i', strtotime($tv['usado_en']));
+    $fecha_expira = date('d/m/Y \a \l\a\s H:i', strtotime($tv['expira_en']));
+    ?>
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Acceso no disponible — F&amp;C Consultores</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+        <style>
+            * { box-sizing: border-box; margin: 0; padding: 0; }
+            body {
+                font-family: 'Inter', 'Segoe UI', sans-serif;
+                background: linear-gradient(145deg, #0f0a1e 0%, #1e0f4a 45%, #12082e 100%);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 24px;
+            }
+            .box {
+                background: white;
+                border-radius: 20px;
+                padding: 48px 40px;
+                max-width: 460px;
+                width: 100%;
+                text-align: center;
+                box-shadow: 0 24px 80px rgba(124, 58, 237, 0.25);
+                position: relative;
+                overflow: hidden;
+            }
+            .box::before {
+                content: '';
+                position: absolute;
+                top: 0; left: 0; right: 0;
+                height: 3px;
+                background: linear-gradient(90deg, #6d28d9, #a855f7, #6d28d9);
+            }
+            .icon { font-size: 52px; margin-bottom: 16px; }
+            h1 { font-size: 21px; font-weight: 700; color: #1a1433; margin-bottom: 12px; }
+            p { font-size: 14px; color: #6b7280; line-height: 1.7; margin-bottom: 28px; }
+            .detalle {
+                background: #f9fafb;
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+                padding: 16px 20px;
+                margin-bottom: 28px;
+                text-align: left;
+            }
+            .detalle-row {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                font-size: 13px;
+                padding: 7px 0;
+                border-bottom: 1px solid #f3f4f6;
+            }
+            .detalle-row:last-child { border-bottom: none; }
+            .detalle-label { color: #6b7280; font-weight: 500; }
+            .detalle-val   { color: #111827; font-weight: 600; }
+            .badge-expirado {
+                display: inline-block;
+                background: #fef2f2;
+                color: #dc2626;
+                font-size: 11px;
+                font-weight: 700;
+                padding: 3px 10px;
+                border-radius: 99px;
+                border: 1px solid #fecaca;
+                letter-spacing: 0.4px;
+                text-transform: uppercase;
+            }
+            a {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                background: linear-gradient(135deg, #1a1433, #7c3aed);
+                color: white;
+                text-decoration: none;
+                padding: 12px 28px;
+                border-radius: 10px;
+                font-size: 14px;
+                font-weight: 600;
+                box-shadow: 0 4px 16px rgba(124, 58, 237, 0.35);
+            }
+        </style>
+    </head>
+    <body>
+        <div class="box">
+            <div class="icon">🔒</div>
+            <h1>Acceso no disponible</h1>
+            <p>Este contenido ya fue visualizado. Tu acceso ha expirado y no está disponible nuevamente.</p>
+            <div class="detalle">
+                <div class="detalle-row">
+                    <span class="detalle-label">Fecha de acceso</span>
+                    <span class="detalle-val"><?= htmlspecialchars($fecha_acceso) ?></span>
+                </div>
+                <div class="detalle-row">
+                    <span class="detalle-label">Fecha de expiración</span>
+                    <span class="detalle-val"><?= htmlspecialchars($fecha_expira) ?></span>
+                </div>
+                <div class="detalle-row">
+                    <span class="detalle-label">Estado</span>
+                    <span class="detalle-val"><span class="badge-expirado">Expirado</span></span>
+                </div>
+            </div>
+            <a href="portal.php">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                     fill="none" stroke="currentColor" stroke-width="2.5"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="19" y1="12" x2="5" y2="12"/>
+                    <polyline points="12 19 5 12 12 5"/>
+                </svg>
+                Volver al portal
+            </a>
+        </div>
+    </body>
+    </html>
+    <?php
+}
+
 // ── Auth: sesión activa ──────────────────────────────────────────────────────
 
 if (!isset($_SESSION['participante_id'])) {
@@ -156,12 +283,16 @@ if ((int) $tv['participante_id'] !== (int) $_SESSION['participante_id']) {
 if (new DateTime('now') > new DateTime($tv['expira_en'])) {
     logAcceso((int) $tv['participante_id'], (int) $tv['recurso_id'], 'video_expirado');
     http_response_code(403);
-    renderError(
-        'Enlace expirado',
-        'Tu enlace de acceso al video expiró. Regresa al portal y haz clic en "Ver video" para obtener uno nuevo válido por ' . VIDEO_EXPIRACION_HORAS . ' horas.',
-        'Volver al portal',
-        'portal.php'
-    );
+    if ($tv['usado_en'] !== null) {
+        renderAccesoAgotado($tv);
+    } else {
+        renderError(
+            'Enlace expirado',
+            'Tu enlace de acceso al video expiró. Regresa al portal y haz clic en "Ver video" para obtener uno nuevo.',
+            'Volver al portal',
+            'portal.php'
+        );
+    }
     exit;
 }
 
@@ -292,6 +423,7 @@ if (isset($_GET['raw'])) {
 
 $token_enc    = htmlspecialchars(urlencode($token));
 $nombre_video = htmlspecialchars($recurso['nombre']);
+$expira_ts    = strtotime($tv['expira_en']);   // timestamp UNIX hora Colombia
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -599,6 +731,32 @@ $nombre_video = htmlspecialchars($recurso['nombre']);
             #vid-status { font-size: 11px; padding: 4px 12px; top: 10px; }
         }
 
+        /* ── Badge de expiración de acceso ─────────────────────────── */
+        #expira-badge {
+            position: absolute;
+            top: 14px;
+            right: 14px;
+            z-index: 20;
+            background: rgba(0, 0, 0, 0.65);
+            color: #fff;
+            font-size: 12px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            white-space: nowrap;
+            display: block;
+        }
+        #expira-badge.visible  { opacity: 1; }
+        #expira-badge.urgente  { background: rgba(185, 28, 28, 0.80); }
+
+        @media (max-width: 600px) {
+            #expira-badge { font-size: 11px; padding: 4px 8px; top: 10px; right: 10px; }
+        }
+
         /* ── Marca de agua ─────────────────────────────────────────── */
         #wm-overlay {
             position: absolute;
@@ -670,6 +828,10 @@ $nombre_video = htmlspecialchars($recurso['nombre']);
 
         <div id="vid-status" role="status" aria-live="polite" aria-atomic="true">
             <span id="vid-status-text"></span>
+        </div>
+
+        <div id="expira-badge" role="timer" aria-live="polite">
+            Tu acceso expira en <span id="expira-tiempo">--:--</span>
         </div>
 
         <button id="big-play" aria-label="Reproducir">
@@ -931,6 +1093,42 @@ $nombre_video = htmlspecialchars($recurso['nombre']);
     setInterval(moveWm, 9000);
 
     syncPlay();
+
+    // ── Badge de expiración de acceso ──────────────────────────────────────
+    var expiraTs    = <?= (int) $expira_ts ?> * 1000;
+    var expiraBadge = document.getElementById('expira-badge');
+    var expiraSpan  = document.getElementById('expira-tiempo');
+
+    console.log('[expira] expiraTs:', expiraTs, '| Date.now:', Date.now(), '| null?', !expiraBadge, !expiraSpan);
+
+    function formatearExpira(seg) {
+        var m = Math.floor(seg / 60);
+        var s = seg % 60;
+        return m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
+    function actualizarExpira() {
+        var restante = Math.floor((expiraTs - Date.now()) / 1000);
+
+        console.log('[expira] restante:', restante, 'seg | visible:', restante <= 600);
+
+        if (restante <= 0) {
+            expiraBadge.innerHTML = 'Acceso expirado';
+            expiraBadge.classList.add('visible', 'urgente');
+            return;
+        }
+
+        if (restante <= 600) {
+            expiraBadge.classList.add('visible');
+            expiraBadge.classList.toggle('urgente', restante <= 120);
+            expiraSpan.textContent = formatearExpira(restante);
+        } else {
+            expiraBadge.classList.remove('visible');
+        }
+    }
+
+    actualizarExpira();
+    setInterval(actualizarExpira, 1000);
 }());
 </script>
 

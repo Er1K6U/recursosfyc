@@ -5,7 +5,8 @@
 ```
 database/
 └── migrations/
-    └── 001_video_restricted_access.sql
+    ├── 001_video_restricted_access.sql
+    └── 002_video_duration_decimal.sql
 ```
 
 ## Convención de nombres
@@ -20,6 +21,7 @@ Las migraciones se aplican **en orden numérico ascendente**.
 | # | Archivo | Descripción |
 |---|---------|-------------|
 | 001 | `001_video_restricted_access.sql` | Agrega columnas de video a `recursos`; crea `tokens_video` y `recurso_permisos_video` |
+| 002 | `002_video_duration_decimal.sql` | Cambia `video_expira_horas` de `SMALLINT` a `DECIMAL(6,4)` para soportar duraciones sub-hora (ej: 5 minutos = 0.0833) |
 
 ---
 
@@ -72,3 +74,4 @@ Las migraciones se aplican **en orden numérico ascendente**.
 | Migración | Fecha aplicada | Quién | Notas |
 |-----------|---------------|-------|-------|
 | 001 | _pendiente_ | — | Primera migración — proyecto nuevo en producción |
+| 002 | _pendiente_ | — | Cambio de tipo de columna; aplicar junto con código PHP actualizado |

@@ -2,6 +2,8 @@
 session_start();
 require_once 'db.php';
 
+date_default_timezone_set('America/Bogota');
+
 define('VIDEO_EXPIRACION_HORAS', 4);
 
 function generarUUID(): string
@@ -122,9 +124,145 @@ if (isset($_GET['ver_video'])) {
             header('Location: portal.php');
             exit;
         }
-        $token  = generarUUID();
-        $horas  = max(1, (int) ($recurso_v['video_expira_horas'] ?? VIDEO_EXPIRACION_HORAS));
-        $expira = (new DateTime('now'))->modify("+{$horas} hours")->format('Y-m-d H:i:s');
+        $stmt_visto = $pdo->prepare(
+            "SELECT usado_en, expira_en, created_at FROM tokens_video
+             WHERE participante_id = ? AND recurso_id = ?
+               AND usado_en IS NOT NULL AND expira_en < NOW()
+             ORDER BY created_at DESC LIMIT 1"
+        );
+        $stmt_visto->execute([$_SESSION['participante_id'], $recurso_id]);
+        $token_visto = $stmt_visto->fetch();
+
+        if ($token_visto) {
+            $fecha_acceso = date('d/m/Y \a \l\a\s H:i', strtotime($token_visto['usado_en']));
+            $fecha_expira = date('d/m/Y \a \l\a\s H:i', strtotime($token_visto['expira_en']));
+            http_response_code(403);
+            ?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acceso no disponible — F&amp;C Consultores</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+            background: linear-gradient(145deg, #0f0a1e 0%, #1e0f4a 45%, #12082e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+        .box {
+            background: white;
+            border-radius: 20px;
+            padding: 48px 40px;
+            max-width: 460px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 24px 80px rgba(124, 58, 237, 0.25);
+            position: relative;
+            overflow: hidden;
+        }
+        .box::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #6d28d9, #a855f7, #6d28d9);
+        }
+        .icon { font-size: 52px; margin-bottom: 16px; }
+        h1 { font-size: 21px; font-weight: 700; color: #1a1433; margin-bottom: 12px; }
+        .desc { font-size: 14px; color: #6b7280; line-height: 1.7; margin-bottom: 28px; }
+        .detalle {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin-bottom: 28px;
+            text-align: left;
+        }
+        .detalle-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+            padding: 7px 0;
+            border-bottom: 1px solid #f3f4f6;
+        }
+        .detalle-row:last-child { border-bottom: none; }
+        .detalle-label { color: #6b7280; font-weight: 500; }
+        .detalle-val   { color: #111827; font-weight: 600; }
+        .badge-expirado {
+            display: inline-block;
+            background: #fef2f2;
+            color: #dc2626;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 10px;
+            border-radius: 99px;
+            border: 1px solid #fecaca;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+        }
+        .btn-volver {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: linear-gradient(135deg, #1a1433, #7c3aed);
+            color: white;
+            text-decoration: none;
+            padding: 12px 28px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            box-shadow: 0 4px 16px rgba(124, 58, 237, 0.35);
+        }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <div class="icon">🔒</div>
+        <h1>Acceso no disponible</h1>
+        <p class="desc">Este contenido ya fue visualizado. Tu acceso ha expirado y no está disponible nuevamente.</p>
+        <div class="detalle">
+            <div class="detalle-row">
+                <span class="detalle-label">Fecha de acceso</span>
+                <span class="detalle-val"><?= htmlspecialchars($fecha_acceso) ?></span>
+            </div>
+            <div class="detalle-row">
+                <span class="detalle-label">Fecha de expiración</span>
+                <span class="detalle-val"><?= htmlspecialchars($fecha_expira) ?></span>
+            </div>
+            <div class="detalle-row">
+                <span class="detalle-label">Estado</span>
+                <span class="detalle-val"><span class="badge-expirado">Expirado</span></span>
+            </div>
+        </div>
+        <a href="portal.php" class="btn-volver">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                 fill="none" stroke="currentColor" stroke-width="2.5"
+                 stroke-linecap="round" stroke-linejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12"/>
+                <polyline points="12 19 5 12 12 5"/>
+            </svg>
+            Volver al portal
+        </a>
+    </div>
+</body>
+</html>
+<?php
+            exit;
+        }
+
+        $token        = generarUUID();
+        $horas_expira = max(1/60, (float) ($recurso_v['video_expira_horas'] ?? VIDEO_EXPIRACION_HORAS));
+        $segundos     = (int) round($horas_expira * 3600);
+        $expira       = (new DateTime('now'))->add(new DateInterval("PT{$segundos}S"))->format('Y-m-d H:i:s');
         $ip     = $_SERVER['REMOTE_ADDR'];
         $pdo->prepare("INSERT INTO tokens_video (token, participante_id, recurso_id, expira_en, ip_generado) VALUES (?, ?, ?, ?, ?)")
             ->execute([$token, $_SESSION['participante_id'], $recurso_id, $expira, $ip]);

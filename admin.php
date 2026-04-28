@@ -337,9 +337,11 @@ if ($tab === 'recursos') {
         $desc           = trim($_POST['descripcion_video'] ?? '');
         $video_url      = trim($_POST['url_video'] ?? '');
         $video_existente = trim($_POST['video_existente'] ?? '');
-        $horas          = max(1, (int) ($_POST['video_expira_horas'] ?? 4));
-
-        error_log("VIDEO EXISTENTE: " . $video_existente);
+        $valor_tiempo   = max(1, (int) ($_POST['video_expira_horas'] ?? 4));
+        $unidad_tiempo  = ($_POST['unidad_tiempo'] ?? 'horas') === 'minutos' ? 'minutos' : 'horas';
+        $horas          = ($unidad_tiempo === 'minutos')
+                            ? max(1/60, $valor_tiempo / 60)   // mínimo 1 minuto
+                            : max(1/60, (float) $valor_tiempo);
 
         $seleccionados = array_map('intval', $_POST['participantes_video'] ?? []);
 
@@ -1217,10 +1219,19 @@ if ($tab === 'password') {
                     <div class="form-section">
                         <div class="form-section-title">⏱ Duración del acceso</div>
                         <div class="form-row" style="margin-bottom:0;">
-                            <div class="field" style="max-width:240px;">
-                                <label>Horas desde que el participante abre el video</label>
-                                <input type="number" name="video_expira_horas" value="4" min="1" max="720">
-                                <p style="font-size:12px;color:#999;margin-top:4px;">El enlace expira pasado este tiempo.</p>
+                            <div class="field" style="max-width:320px;">
+                                <label>El enlace expira pasado este tiempo desde que el participante abre el video</label>
+                                <div style="display:flex;gap:8px;align-items:center;">
+                                    <input type="number" name="video_expira_horas" value="4" min="1" max="720"
+                                           style="width:90px;">
+                                    <select name="unidad_tiempo" style="flex:1;">
+                                        <option value="horas">Horas</option>
+                                        <option value="minutos">Minutos</option>
+                                    </select>
+                                </div>
+                                <p style="font-size:12px;color:#999;margin-top:4px;">
+                                    Ejemplos: 4 horas · 30 minutos · 5 minutos (para pruebas).
+                                </p>
                             </div>
                         </div>
                     </div>
