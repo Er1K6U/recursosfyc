@@ -20,15 +20,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $participante = $stmt->fetch();
 
         if ($participante) {
-            $_SESSION['participante_id'] = $participante['id'];
-            $_SESSION['participante_nombre'] = $participante['nombre'];
+            $_SESSION['participante_id']        = $participante['id'];
+            $_SESSION['participante_nombre']    = $participante['nombre'];
             $_SESSION['participante_documento'] = $participante['documento'];
 
-            $ip = $_SERVER['REMOTE_ADDR'];
-            $stmt2 = $pdo->prepare("INSERT INTO accesos (participante_id, accion, ip) VALUES (?, 'login', ?)");
-            $stmt2->execute([$participante['id'], $ip]);
+            // Resolve which events this participant belongs to
+            $stmt_ev = $pdo->prepare("
+                SELECT e.id, e.nombre
+                FROM evento_participantes ep
+                JOIN eventos e ON e.id = ep.evento_id AND e.activo = 1
+                WHERE ep.persona_id = ? AND ep.activo = 1
+                ORDER BY e.id ASC
+            ");
+            $stmt_ev->execute([$participante['id']]);
+            $eventos_participante = $stmt_ev->fetchAll();
 
-            header('Location: terms.php');
+            if (count($eventos_participante) === 0) {
+                // Legacy participant not in evento_participantes: use default event
+                $ev_def = $pdo->query("SELECT id FROM eventos WHERE es_default = 1 AND activo = 1 LIMIT 1")->fetch();
+                $evento_id = $ev_def ? (int) $ev_def['id'] : 1;
+                $_SESSION['evento_id'] = $evento_id;
+                $ip = $_SERVER['REMOTE_ADDR'];
+                $pdo->prepare("INSERT INTO accesos (participante_id, accion, ip, evento_id) VALUES (?, 'login', ?, ?)")
+                    ->execute([$participante['id'], $ip, $evento_id]);
+                header('Location: terms.php');
+                exit;
+            }
+
+            if (count($eventos_participante) === 1) {
+                $evento_id = (int) $eventos_participante[0]['id'];
+                $_SESSION['evento_id'] = $evento_id;
+                $ip = $_SERVER['REMOTE_ADDR'];
+                $pdo->prepare("INSERT INTO accesos (participante_id, accion, ip, evento_id) VALUES (?, 'login', ?, ?)")
+                    ->execute([$participante['id'], $ip, $evento_id]);
+                header('Location: terms.php');
+                exit;
+            }
+
+            // Multiple events: store minimal list in session, redirect to selector
+            $_SESSION['eventos_disponibles'] = array_map(fn($ev) => [
+                'id'     => (int) $ev['id'],
+                'nombre' => $ev['nombre'],
+            ], $eventos_participante);
+            header('Location: evento_select.php');
             exit;
         } else {
             $error = 'Documento no encontrado o no autorizado. Verifica e intenta de nuevo.';

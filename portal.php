@@ -19,7 +19,46 @@ if (!isset($_SESSION['participante_id']) || !isset($_SESSION['terminos_aceptados
     exit;
 }
 
-$stmt = $pdo->query("SELECT * FROM recursos WHERE activo = 1 ORDER BY created_at ASC");
+// Cambiar de evento sin cerrar sesión
+if (isset($_GET['cambiar_evento'])) {
+    unset($_SESSION['evento_id']);
+    unset($_SESSION['eventos_disponibles']);
+    // Re-consultar eventos disponibles para repoblar el selector
+    $stmt_cev = $pdo->prepare("
+        SELECT e.id, e.nombre
+        FROM evento_participantes ep
+        JOIN eventos e ON e.id = ep.evento_id AND e.activo = 1
+        WHERE ep.persona_id = ? AND ep.activo = 1
+        ORDER BY e.id ASC
+    ");
+    $stmt_cev->execute([$_SESSION['participante_id']]);
+    $ev_list = $stmt_cev->fetchAll();
+    if (count($ev_list) > 1) {
+        $_SESSION['eventos_disponibles'] = array_map(fn($ev) => [
+            'id'     => (int) $ev['id'],
+            'nombre' => $ev['nombre'],
+        ], $ev_list);
+        header('Location: evento_select.php');
+    } else {
+        // Solo un evento disponible: restaurar y quedarse en portal
+        if (!empty($ev_list)) {
+            $_SESSION['evento_id'] = (int) $ev_list[0]['id'];
+        }
+        header('Location: portal.php');
+    }
+    exit;
+}
+
+// Resolver evento activo; fallback al evento default para sesiones antiguas
+$evento_id = (int) ($_SESSION['evento_id'] ?? 0);
+if (!$evento_id) {
+    $ev_def = $pdo->query("SELECT id FROM eventos WHERE es_default = 1 AND activo = 1 LIMIT 1")->fetch();
+    $evento_id = $ev_def ? (int) $ev_def['id'] : 1;
+    $_SESSION['evento_id'] = $evento_id;
+}
+
+$stmt = $pdo->prepare("SELECT * FROM recursos WHERE activo = 1 AND evento_id = ? ORDER BY created_at ASC");
+$stmt->execute([$evento_id]);
 $recursos = $stmt->fetchAll();
 
 $stmt_perm = $pdo->prepare(
@@ -31,24 +70,22 @@ $stmt_perm = $pdo->prepare(
 $stmt_perm->execute([$_SESSION['participante_id']]);
 $permisos_video = array_map('intval', array_column($stmt_perm->fetchAll(), 'recurso_id'));
 
-$stmt2 = $pdo->query("SELECT clave, valor FROM configuracion");
-$config = [];
-while ($row = $stmt2->fetch()) {
-    $config[$row['clave']] = $row['valor'];
-}
-$banner = $config['banner'] ?? '';
-$titulo = $config['titulo_evento'] ?? 'Diplomado en Gestión Integral de Riesgos';
+$stmt_ev = $pdo->prepare("SELECT titulo_login, banner, nombre FROM eventos WHERE id = ? LIMIT 1");
+$stmt_ev->execute([$evento_id]);
+$ev_data = $stmt_ev->fetch();
+$banner = $ev_data['banner'] ?? '';
+$titulo = $ev_data['titulo_login'] ?: ($ev_data['nombre'] ?? 'Diplomado en Gestión Integral de Riesgos');
 
-// Obtener certificado del participante
-$stmt_cert = $pdo->prepare("SELECT * FROM certificados WHERE participante_id = ?");
-$stmt_cert->execute([$_SESSION['participante_id']]);
+// Obtener certificado del participante para este evento
+$stmt_cert = $pdo->prepare("SELECT * FROM certificados WHERE participante_id = ? AND evento_id = ?");
+$stmt_cert->execute([$_SESSION['participante_id'], $evento_id]);
 $certificados_participante = $stmt_cert->fetchAll();
 
 // Manejar descarga certificado
 if (isset($_GET['descargar_cert'])) {
     $cert_id = (int) $_GET['descargar_cert'];
-    $stmt_dc = $pdo->prepare("SELECT * FROM certificados WHERE id = ? AND participante_id = ?");
-    $stmt_dc->execute([$cert_id, $_SESSION['participante_id']]);
+    $stmt_dc = $pdo->prepare("SELECT * FROM certificados WHERE id = ? AND participante_id = ? AND evento_id = ?");
+    $stmt_dc->execute([$cert_id, $_SESSION['participante_id'], $evento_id]);
     $cert = $stmt_dc->fetch();
 
     if ($cert) {
@@ -67,15 +104,15 @@ if (isset($_GET['descargar_cert'])) {
 // Manejar descarga
 if (isset($_GET['descargar'])) {
     $recurso_id = (int) $_GET['descargar'];
-    $stmt3 = $pdo->prepare("SELECT * FROM recursos WHERE id = ? AND activo = 1");
-    $stmt3->execute([$recurso_id]);
+    $stmt3 = $pdo->prepare("SELECT * FROM recursos WHERE id = ? AND activo = 1 AND evento_id = ?");
+    $stmt3->execute([$recurso_id, $evento_id]);
     $recurso = $stmt3->fetch();
 
     if ($recurso) {
         // Registrar descarga
         $ip = $_SERVER['REMOTE_ADDR'];
-        $stmt4 = $pdo->prepare("INSERT INTO accesos (participante_id, accion, recurso_id, ip) VALUES (?, 'descarga', ?, ?)");
-        $stmt4->execute([$_SESSION['participante_id'], $recurso_id, $ip]);
+        $stmt4 = $pdo->prepare("INSERT INTO accesos (participante_id, accion, recurso_id, ip, evento_id) VALUES (?, 'descarga', ?, ?, ?)");
+        $stmt4->execute([$_SESSION['participante_id'], $recurso_id, $ip, $evento_id]);
 
         // Recurso externo — redirigir a URL
         if (!empty($recurso['url_externa'])) {
@@ -112,15 +149,15 @@ if (isset($_GET['descargar'])) {
 // Generar token de acceso temporal para video restringido
 if (isset($_GET['ver_video'])) {
     $recurso_id = (int) $_GET['ver_video'];
-    $stmt_v     = $pdo->prepare("SELECT * FROM recursos WHERE id = ? AND activo = 1");
-    $stmt_v->execute([$recurso_id]);
+    $stmt_v = $pdo->prepare("SELECT * FROM recursos WHERE id = ? AND activo = 1 AND evento_id = ?");
+    $stmt_v->execute([$recurso_id, $evento_id]);
     $recurso_v = $stmt_v->fetch();
 
     $tipos_video = ['mp4', 'webm', 'ogg', 'mov', 'avi', 'mkv', 'm4v'];
     if ($recurso_v && (!empty($recurso_v['es_video']) || in_array(strtolower($recurso_v['tipo']), $tipos_video))) {
         if (!in_array((int) $recurso_v['id'], $permisos_video)) {
-            $pdo->prepare("INSERT INTO accesos (participante_id, accion, recurso_id, ip) VALUES (?, 'video_no_autorizado', ?, ?)")
-                ->execute([$_SESSION['participante_id'], $recurso_id, $_SERVER['REMOTE_ADDR'] ?? '']);
+            $pdo->prepare("INSERT INTO accesos (participante_id, accion, recurso_id, ip, evento_id) VALUES (?, 'video_no_autorizado', ?, ?, ?)")
+                ->execute([$_SESSION['participante_id'], $recurso_id, $_SERVER['REMOTE_ADDR'] ?? '', $evento_id]);
             header('Location: portal.php');
             exit;
         }
@@ -376,6 +413,28 @@ if (isset($_GET['ver_video'])) {
         .topbar .btn-salir:hover {
             background: rgba(255, 255, 255, 0.16);
             color: white;
+        }
+
+        .topbar .btn-cambiar-evento {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: transparent;
+            color: rgba(255, 255, 255, 0.65);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 7px 14px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-size: 12px;
+            font-weight: 500;
+            transition: background 0.2s, color 0.2s, border-color 0.2s;
+            white-space: nowrap;
+        }
+
+        .topbar .btn-cambiar-evento:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border-color: rgba(255, 255, 255, 0.35);
         }
 
         .banner-wrap {
@@ -726,6 +785,9 @@ if (isset($_GET['ver_video'])) {
             </div>
             <span class="user-name"><?= htmlspecialchars($_SESSION['participante_nombre']) ?></span>
         </div>
+        <a href="portal.php?cambiar_evento=1" class="btn-cambiar-evento">
+            🔄 Cambiar evento
+        </a>
         <a href="logout.php" class="btn-salir">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

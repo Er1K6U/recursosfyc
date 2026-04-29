@@ -7,9 +7,11 @@ if (!isset($_SESSION['participante_id'])) {
     exit;
 }
 
-// Verificar si ya firmó antes
-$stmt = $pdo->prepare("SELECT id FROM accesos WHERE participante_id = ? AND accion = 'acepto_terminos' LIMIT 1");
-$stmt->execute([$_SESSION['participante_id']]);
+$evento_id = (int) ($_SESSION['evento_id'] ?? 1);
+
+// Verificar si ya firmó antes para este evento
+$stmt = $pdo->prepare("SELECT id FROM accesos WHERE participante_id = ? AND accion = 'acepto_terminos' AND evento_id = ? LIMIT 1");
+$stmt->execute([$_SESSION['participante_id'], $evento_id]);
 $ya_firmo = $stmt->fetch();
 
 if ($ya_firmo) {
@@ -37,8 +39,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $_SESSION['terminos_aceptados'] = true;
 
         $ip = $_SERVER['REMOTE_ADDR'];
-        $stmt = $pdo->prepare("INSERT INTO accesos (participante_id, accion, firma_imagen, ip) VALUES (?, 'acepto_terminos', ?, ?)");
-        $stmt->execute([$_SESSION['participante_id'], $firma, $ip]);
+        $stmt = $pdo->prepare("INSERT INTO accesos (participante_id, accion, firma_imagen, ip, evento_id) VALUES (?, 'acepto_terminos', ?, ?, ?)");
+        $stmt->execute([$_SESSION['participante_id'], $firma, $ip, $evento_id]);
 
         header('Location: portal.php');
         exit;
