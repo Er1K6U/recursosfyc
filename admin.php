@@ -177,6 +177,86 @@ function av_mmss(int $s): string {
 if (!empty($_SESSION['flash']['ok']))  { $mensaje   = $_SESSION['flash']['ok'];  unset($_SESSION['flash']['ok']);  }
 if (!empty($_SESSION['flash']['err'])) { $error_msg = $_SESSION['flash']['err']; unset($_SESSION['flash']['err']); }
 
+// ===================== SELECTOR DE EVENTO ACTIVO =====================
+// Cambio de evento desde topbar (GET ?set_evento=N)
+if (isset($_GET['set_evento'])) {
+    $sev = (int) $_GET['set_evento'];
+    if ($sev > 0) { $_SESSION['admin_evento_id'] = $sev; }
+    header('Location: admin.php?tab=' . urlencode($tab));
+    exit;
+}
+
+$todos_eventos = $pdo->query(
+    "SELECT id, nombre, es_default FROM eventos WHERE activo = 1 ORDER BY id ASC"
+)->fetchAll();
+
+if (!isset($_SESSION['admin_evento_id'])) {
+    foreach ($todos_eventos as $_ev) {
+        if ($_ev['es_default']) { $_SESSION['admin_evento_id'] = (int) $_ev['id']; break; }
+    }
+    if (!isset($_SESSION['admin_evento_id']) && !empty($todos_eventos)) {
+        $_SESSION['admin_evento_id'] = (int) $todos_eventos[0]['id'];
+    }
+}
+$admin_evento_id     = (int) ($_SESSION['admin_evento_id'] ?? 1);
+$admin_evento_nombre = '';
+foreach ($todos_eventos as $_ev) {
+    if ((int) $_ev['id'] === $admin_evento_id) { $admin_evento_nombre = $_ev['nombre']; break; }
+}
+
+// ===================== EVENTOS =====================
+if ($tab === 'eventos') {
+
+    // Crear evento
+    if (isset($_POST['agregar_evento'])) {
+        $ev_nombre = trim($_POST['ev_nombre'] ?? '');
+        $ev_slug   = strtolower(trim($_POST['ev_slug'] ?? ''));
+        $ev_activo = isset($_POST['ev_activo']) ? 1 : 0;
+        if ($ev_nombre && $ev_slug) {
+            $ev_slug = preg_replace('/[^a-z0-9\-]/', '-', $ev_slug);
+            try {
+                $pdo->prepare("INSERT INTO eventos (nombre, slug, activo) VALUES (?, ?, ?)")
+                    ->execute([$ev_nombre, $ev_slug, $ev_activo]);
+                $_SESSION['flash']['ok'] = 'Evento creado correctamente.';
+            } catch (PDOException $e) {
+                $_SESSION['flash']['err'] = 'Error: el slug ya existe o los datos son inválidos.';
+            }
+        } else {
+            $_SESSION['flash']['err'] = 'Nombre y slug son obligatorios.';
+        }
+        header('Location: admin.php?tab=eventos');
+        exit;
+    }
+
+    // Editar evento
+    if (isset($_POST['editar_evento'])) {
+        $ev_id     = (int) ($_POST['ev_id'] ?? 0);
+        $ev_nombre = trim($_POST['ev_nombre'] ?? '');
+        $ev_slug   = strtolower(trim($_POST['ev_slug'] ?? ''));
+        $ev_activo = isset($_POST['ev_activo']) ? 1 : 0;
+        if ($ev_id && $ev_nombre && $ev_slug) {
+            $ev_slug = preg_replace('/[^a-z0-9\-]/', '-', $ev_slug);
+            try {
+                $pdo->prepare("UPDATE eventos SET nombre = ?, slug = ?, activo = ? WHERE id = ?")
+                    ->execute([$ev_nombre, $ev_slug, $ev_activo, $ev_id]);
+                $_SESSION['flash']['ok'] = 'Evento actualizado.';
+            } catch (PDOException $e) {
+                $_SESSION['flash']['err'] = 'Error al actualizar: el slug podría ya existir.';
+            }
+        }
+        header('Location: admin.php?tab=eventos');
+        exit;
+    }
+
+    $eventos_lista = $pdo->query("
+        SELECT e.*,
+               (SELECT COUNT(*) FROM evento_participantes ep WHERE ep.evento_id = e.id AND ep.activo = 1) AS total_p,
+               (SELECT COUNT(*) FROM recursos r WHERE r.evento_id = e.id AND r.activo = 1) AS total_r
+        FROM   eventos e
+        ORDER  BY e.id ASC
+    ")->fetchAll();
+}
+
 // ===================== CERTIFICADOS =====================
 if ($tab === 'certificados') {
 
@@ -188,8 +268,8 @@ if ($tab === 'certificados') {
             $nombre_archivo = 'cert_' . time() . '_' . basename($_FILES['archivo_certificado']['name']);
             $destino = 'uploads/' . $nombre_archivo;
             if (move_uploaded_file($_FILES['archivo_certificado']['tmp_name'], $destino)) {
-                $stmt = $pdo->prepare("INSERT INTO certificados (participante_id, nombre, archivo) VALUES (?, ?, ?)");
-                $stmt->execute([$participante_id, $nombre, $nombre_archivo]);
+                $stmt = $pdo->prepare("INSERT INTO certificados (evento_id, participante_id, nombre, archivo) VALUES (?, ?, ?, ?)");
+                $stmt->execute([$admin_evento_id, $participante_id, $nombre, $nombre_archivo]);
                 $_SESSION['flash']['ok'] = 'Certificado agregado correctamente.';
                 header('Location: admin.php?tab=certificados');
                 exit;
@@ -212,14 +292,25 @@ if ($tab === 'certificados') {
         exit;
     }
 
-    $certificados = $pdo->query("
+    $stmt_cert = $pdo->prepare("
         SELECT c.*, p.nombre AS nombre_participante, p.documento
         FROM certificados c
         JOIN participantes p ON c.participante_id = p.id
+        WHERE c.evento_id = ?
         ORDER BY p.nombre ASC
-    ")->fetchAll();
+    ");
+    $stmt_cert->execute([$admin_evento_id]);
+    $certificados = $stmt_cert->fetchAll();
 
-    $participantes_lista = $pdo->query("SELECT id, documento, nombre FROM participantes WHERE activo=1 ORDER BY nombre ASC")->fetchAll();
+    $stmt_plista = $pdo->prepare("
+        SELECT p.id, p.documento, p.nombre
+        FROM participantes p
+        JOIN evento_participantes ep ON ep.persona_id = p.id AND ep.evento_id = ? AND ep.activo = 1
+        WHERE p.activo = 1
+        ORDER BY p.nombre ASC
+    ");
+    $stmt_plista->execute([$admin_evento_id]);
+    $participantes_lista = $stmt_plista->fetchAll();
 }
 
 // ===================== PARTICIPANTES =====================
@@ -295,7 +386,14 @@ if ($tab === 'participantes') {
         exit;
     }
 
-    $participantes = $pdo->query("SELECT * FROM participantes ORDER BY nombre ASC")->fetchAll();
+    $stmt_p = $pdo->prepare("
+        SELECT p.*
+        FROM participantes p
+        JOIN evento_participantes ep ON ep.persona_id = p.id AND ep.evento_id = ? AND ep.activo = 1
+        ORDER BY p.nombre ASC
+    ");
+    $stmt_p->execute([$admin_evento_id]);
+    $participantes = $stmt_p->fetchAll();
 }
 
 // ===================== RECURSOS =====================
@@ -310,8 +408,8 @@ if ($tab === 'recursos') {
         if ($nom) {
             // Recurso con URL externa
             if (!empty($url_externa)) {
-                $stmt = $pdo->prepare("INSERT INTO recursos (nombre, descripcion, archivo, tipo, url_externa) VALUES (?, ?, ?, ?, ?)");
-                $stmt->execute([$nom, $desc, 'externo', 'url', $url_externa]);
+                $stmt = $pdo->prepare("INSERT INTO recursos (evento_id, nombre, descripcion, archivo, tipo, url_externa) VALUES (?, ?, ?, ?, ?, ?)");
+                $stmt->execute([$admin_evento_id, $nom, $desc, 'externo', 'url', $url_externa]);
                 $_SESSION['flash']['ok'] = 'Recurso externo agregado correctamente.';
                 header('Location: admin.php?tab=recursos');
                 exit;
@@ -322,8 +420,8 @@ if ($tab === 'recursos') {
                 $destino = 'uploads/' . $nombre_archivo;
                 if (move_uploaded_file($_FILES['archivo_recurso']['tmp_name'], $destino)) {
                     $ext = strtolower(pathinfo($nombre_archivo, PATHINFO_EXTENSION));
-                    $stmt = $pdo->prepare("INSERT INTO recursos (nombre, descripcion, archivo, tipo, url_externa) VALUES (?, ?, ?, ?, NULL)");
-                    $stmt->execute([$nom, $desc, $nombre_archivo, $ext]);
+                    $stmt = $pdo->prepare("INSERT INTO recursos (evento_id, nombre, descripcion, archivo, tipo, url_externa) VALUES (?, ?, ?, ?, ?, NULL)");
+                    $stmt->execute([$admin_evento_id, $nom, $desc, $nombre_archivo, $ext]);
                     $_SESSION['flash']['ok'] = 'Recurso agregado correctamente.';
                     header('Location: admin.php?tab=recursos');
                     exit;
@@ -354,8 +452,8 @@ if ($tab === 'recursos') {
             $_SESSION['flash']['err'] = 'El nombre del video es obligatorio.';
         } elseif (!empty($video_url)) {
             // ── Opción 1: URL externa ─────────────────────────────────────────
-            $stmt = $pdo->prepare("INSERT INTO recursos (nombre, descripcion, archivo, tipo, url_externa, es_video, ruta_video, video_expira_horas) VALUES (?, ?, 'externo_video', 'video', ?, 1, ?, ?)");
-            $stmt->execute([$nom, $desc, $video_url, $video_url, $horas]);
+            $stmt = $pdo->prepare("INSERT INTO recursos (evento_id, nombre, descripcion, archivo, tipo, url_externa, es_video, ruta_video, video_expira_horas) VALUES (?, ?, ?, 'externo_video', 'video', ?, 1, ?, ?)");
+            $stmt->execute([$admin_evento_id, $nom, $desc, $video_url, $video_url, $horas]);
             $nuevo_id = (int) $pdo->lastInsertId();
             if ($nuevo_id && $seleccionados) {
                 $ins_perm = $pdo->prepare("INSERT IGNORE INTO recurso_permisos_video (recurso_id, participante_id) VALUES (?, ?)");
@@ -374,8 +472,8 @@ if ($tab === 'recursos') {
             } else {
                 $destino = 'private_videos/' . $nombre_archivo;
                 if (move_uploaded_file($_FILES['video_archivo']['tmp_name'], $destino)) {
-                    $stmt = $pdo->prepare("INSERT INTO recursos (nombre, descripcion, archivo, tipo, es_video, ruta_video, video_expira_horas) VALUES (?, ?, ?, ?, 1, ?, ?)");
-                    $stmt->execute([$nom, $desc, $nombre_archivo, $ext, $nombre_archivo, $horas]);
+                    $stmt = $pdo->prepare("INSERT INTO recursos (evento_id, nombre, descripcion, archivo, tipo, es_video, ruta_video, video_expira_horas) VALUES (?, ?, ?, ?, ?, 1, ?, ?)");
+                    $stmt->execute([$admin_evento_id, $nom, $desc, $nombre_archivo, $ext, $nombre_archivo, $horas]);
                     $nuevo_id = (int) $pdo->lastInsertId();
                     if ($nuevo_id && $seleccionados) {
                         $ins_perm = $pdo->prepare("INSERT IGNORE INTO recurso_permisos_video (recurso_id, participante_id) VALUES (?, ?)");
@@ -401,8 +499,8 @@ if ($tab === 'recursos') {
                 } elseif (!file_exists('private_videos/' . $nombre_archivo)) {
                     $_SESSION['flash']['err'] = "El archivo '{$nombre_archivo}' no existe en private_videos/.";
                 } else {
-                    $stmt = $pdo->prepare("INSERT INTO recursos (nombre, descripcion, archivo, tipo, es_video, ruta_video, video_expira_horas) VALUES (?, ?, ?, ?, 1, ?, ?)");
-                    $stmt->execute([$nom, $desc, $nombre_archivo, $ext, $nombre_archivo, $horas]);
+                    $stmt = $pdo->prepare("INSERT INTO recursos (evento_id, nombre, descripcion, archivo, tipo, es_video, ruta_video, video_expira_horas) VALUES (?, ?, ?, ?, ?, 1, ?, ?)");
+                    $stmt->execute([$admin_evento_id, $nom, $desc, $nombre_archivo, $ext, $nombre_archivo, $horas]);
                     $nuevo_id = (int) $pdo->lastInsertId();
                     if ($nuevo_id && $seleccionados) {
                         $ins_perm = $pdo->prepare("INSERT IGNORE INTO recurso_permisos_video (recurso_id, participante_id) VALUES (?, ?)");
@@ -428,8 +526,8 @@ if ($tab === 'recursos') {
         $ruta = 'uploads/' . $archivo;
         if ($nom && $archivo && file_exists($ruta)) {
             $ext = strtolower(pathinfo($archivo, PATHINFO_EXTENSION));
-            $stmt = $pdo->prepare("INSERT INTO recursos (nombre, descripcion, archivo, tipo) VALUES (?, ?, ?, ?)");
-            $stmt->execute([$nom, $desc, $archivo, $ext]);
+            $stmt = $pdo->prepare("INSERT INTO recursos (evento_id, nombre, descripcion, archivo, tipo) VALUES (?, ?, ?, ?, ?)");
+            $stmt->execute([$admin_evento_id, $nom, $desc, $archivo, $ext]);
             $_SESSION['flash']['ok'] = 'Recurso registrado correctamente.';
             header('Location: admin.php?tab=recursos');
             exit;
@@ -496,8 +594,19 @@ if ($tab === 'recursos') {
         exit;
     }
 
-    $recursos = $pdo->query("SELECT * FROM recursos ORDER BY created_at DESC")->fetchAll();
-    $participantes_video = $pdo->query("SELECT id, documento, nombre FROM participantes WHERE activo=1 ORDER BY nombre ASC")->fetchAll();
+    $stmt_rec = $pdo->prepare("SELECT * FROM recursos WHERE evento_id = ? ORDER BY created_at DESC");
+    $stmt_rec->execute([$admin_evento_id]);
+    $recursos = $stmt_rec->fetchAll();
+
+    $stmt_pvid = $pdo->prepare("
+        SELECT p.id, p.documento, p.nombre
+        FROM participantes p
+        JOIN evento_participantes ep ON ep.persona_id = p.id AND ep.evento_id = ? AND ep.activo = 1
+        WHERE p.activo = 1
+        ORDER BY p.nombre ASC
+    ");
+    $stmt_pvid->execute([$admin_evento_id]);
+    $participantes_video = $stmt_pvid->fetchAll();
 
     $perms_raw = $pdo->query("SELECT recurso_id, participante_id FROM recurso_permisos_video WHERE activo = 1")->fetchAll();
     $video_perms = [];
@@ -509,57 +618,73 @@ if ($tab === 'recursos') {
 // ===================== CONFIGURACION =====================
 if ($tab === 'configuracion') {
     if (isset($_POST['guardar_config'])) {
-        $titulo = trim($_POST['titulo_evento']);
-        $pdo->prepare("UPDATE configuracion SET valor=? WHERE clave='titulo_evento'")->execute([$titulo]);
+        $titulo_login = trim($_POST['titulo_evento']);
 
         if (isset($_FILES['banner']) && $_FILES['banner']['error'] === 0) {
             $nombre_banner = 'banner_' . time() . '_' . basename($_FILES['banner']['name']);
             $destino = 'uploads/' . $nombre_banner;
             if (move_uploaded_file($_FILES['banner']['tmp_name'], $destino)) {
-                $pdo->prepare("UPDATE configuracion SET valor=? WHERE clave='banner'")->execute([$nombre_banner]);
+                $pdo->prepare("UPDATE eventos SET titulo_login = ?, banner = ? WHERE id = ?")
+                    ->execute([$titulo_login, $nombre_banner, $admin_evento_id]);
+            } else {
+                $pdo->prepare("UPDATE eventos SET titulo_login = ? WHERE id = ?")
+                    ->execute([$titulo_login, $admin_evento_id]);
             }
+        } else {
+            $pdo->prepare("UPDATE eventos SET titulo_login = ? WHERE id = ?")
+                ->execute([$titulo_login, $admin_evento_id]);
         }
-        $_SESSION['flash']['ok'] = 'Configuración guardada.';
+        $_SESSION['flash']['ok'] = 'Configuración del evento guardada.';
         header('Location: admin.php?tab=configuracion');
         exit;
     }
 
-    $stmt = $pdo->query("SELECT clave, valor FROM configuracion");
-    $config = [];
-    while ($row = $stmt->fetch()) {
-        $config[$row['clave']] = $row['valor'];
-    }
+    $stmt_ev_cfg = $pdo->prepare("SELECT titulo_login, banner, nombre FROM eventos WHERE id = ? LIMIT 1");
+    $stmt_ev_cfg->execute([$admin_evento_id]);
+    $ev_cfg = $stmt_ev_cfg->fetch();
+    $config = [
+        'titulo_evento' => $ev_cfg['titulo_login'] ?: ($ev_cfg['nombre'] ?? ''),
+        'banner'        => $ev_cfg['banner'] ?? '',
+    ];
 }
 
 // ===================== LOGS =====================
 if ($tab === 'logs') {
-    $logs = $pdo->query("
+    $stmt_logs = $pdo->prepare("
         SELECT a.*, p.nombre, p.documento, r.nombre AS recurso_nombre
         FROM accesos a
         JOIN participantes p ON a.participante_id = p.id
         LEFT JOIN recursos r ON a.recurso_id = r.id
+        WHERE a.evento_id = ?
         ORDER BY a.fecha DESC
         LIMIT 300
-    ")->fetchAll();
+    ");
+    $stmt_logs->execute([$admin_evento_id]);
+    $logs = $stmt_logs->fetchAll();
 }
 
 // ===================== ANALYTICS VIDEOS =====================
 if ($tab === 'analytics_videos') {
-    $av_recursos = $pdo->query("
-        SELECT id, nombre FROM recursos WHERE es_video = 1 ORDER BY nombre ASC
-    ")->fetchAll();
+    $stmt_avr = $pdo->prepare("SELECT id, nombre FROM recursos WHERE es_video = 1 AND evento_id = ? ORDER BY nombre ASC");
+    $stmt_avr->execute([$admin_evento_id]);
+    $av_recursos = $stmt_avr->fetchAll();
 
-    $av_participantes = $pdo->query("
-        SELECT id, nombre, documento FROM participantes ORDER BY nombre ASC
-    ")->fetchAll();
+    $stmt_avp = $pdo->prepare("
+        SELECT p.id, p.nombre, p.documento
+        FROM participantes p
+        JOIN evento_participantes ep ON ep.persona_id = p.id AND ep.evento_id = ? AND ep.activo = 1
+        ORDER BY p.nombre ASC
+    ");
+    $stmt_avp->execute([$admin_evento_id]);
+    $av_participantes = $stmt_avp->fetchAll();
 
     $av_f_recurso      = isset($_GET['f_recurso'])      ? (int) $_GET['f_recurso']      : 0;
     $av_f_participante = isset($_GET['f_participante']) ? (int) $_GET['f_participante'] : 0;
     $av_f_estado       = in_array($_GET['f_estado'] ?? '', ['completado', 'en_progreso'], true)
                              ? $_GET['f_estado'] : '';
 
-    $av_where  = [];
-    $av_params = [];
+    $av_where  = ['r.evento_id = ?'];
+    $av_params = [$admin_evento_id];
 
     if ($av_f_recurso > 0) {
         $av_where[]  = 'vv.recurso_id = ?';
@@ -997,6 +1122,29 @@ if ($tab === 'password') {
             #tabla-log th:nth-child(3), #tabla-log td:nth-child(3) { display: none; }
         }
 
+        .ev-selector {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+        }
+
+        .ev-selector select {
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            color: white;
+            border-radius: 5px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+            max-width: 200px;
+        }
+
+        .ev-selector select option {
+            background: #7b1a2e;
+            color: white;
+        }
+
         @media (max-width: 600px) {
             .topbar {
                 flex-direction: column;
@@ -1044,9 +1192,22 @@ if ($tab === 'password') {
     <div class="topbar">
         <div class="brand">⚙️ F&amp;C Consultores · Admin</div>
         <div class="right">
-            <span>👤
-                <?= htmlspecialchars($_SESSION['admin_usuario']) ?>
-            </span>
+            <?php if (count($todos_eventos) > 1): ?>
+            <form method="GET" action="admin.php" class="ev-selector">
+                <input type="hidden" name="tab" value="<?= htmlspecialchars($tab) ?>">
+                <span>🗓️</span>
+                <select name="set_evento" onchange="this.form.submit()" title="Cambiar evento activo">
+                    <?php foreach ($todos_eventos as $_ev): ?>
+                    <option value="<?= (int) $_ev['id'] ?>" <?= (int) $_ev['id'] === $admin_evento_id ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($_ev['nombre']) ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+            </form>
+            <?php elseif (!empty($admin_evento_nombre)): ?>
+            <span style="font-size:12px;opacity:.8;">🗓️ <?= htmlspecialchars($admin_evento_nombre) ?></span>
+            <?php endif; ?>
+            <span>👤 <?= htmlspecialchars($_SESSION['admin_usuario']) ?></span>
             <a href="admin.php?logout=1">Cerrar sesión</a>
         </div>
     </div>
@@ -1058,6 +1219,7 @@ if ($tab === 'password') {
         <a href="admin.php?tab=certificados" class="<?= $tab === 'certificados' ? 'active' : '' ?>">🎓 Certificados</a>
         <a href="admin.php?tab=logs" class="<?= $tab === 'logs' ? 'active' : '' ?>">📋 Accesos y Descargas</a>
         <a href="admin.php?tab=analytics_videos" class="<?= $tab === 'analytics_videos' ? 'active' : '' ?>">📊 Analytics Videos</a>
+        <a href="admin.php?tab=eventos" class="<?= $tab === 'eventos' ? 'active' : '' ?>">🗓️ Eventos</a>
         <a href="admin.php?tab=configuracion" class="<?= $tab === 'configuracion' ? 'active' : '' ?>">🎨
             Configuración</a>
         <a href="admin.php?tab=password" class="<?= $tab === 'password' ? 'active' : '' ?>">🔑 Contraseña</a>
@@ -1870,17 +2032,131 @@ if ($tab === 'password') {
                     </div>
                 </div>
 
+                <!-- ============ TAB EVENTOS ============ -->
+            <?php elseif ($tab === 'eventos'): ?>
+
+                <div class="card">
+                    <h3>➕ Crear nuevo evento</h3>
+                    <form method="POST">
+                        <div class="form-row">
+                            <div class="field">
+                                <label>Nombre del evento</label>
+                                <input type="text" name="ev_nombre" id="nuevo-ev-nombre" placeholder="Ej: Diplomado Gestión de Riesgos 2025" required
+                                    oninput="autoSlug(this.value)">
+                            </div>
+                            <div class="field">
+                                <label>Slug (URL)</label>
+                                <input type="text" name="ev_slug" id="nuevo-ev-slug" placeholder="diplomado-gestion-riesgos-2025" required>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="field" style="max-width:200px;">
+                                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                                    <input type="checkbox" name="ev_activo" value="1" checked style="width:auto;"> Activo
+                                </label>
+                            </div>
+                        </div>
+                        <button type="submit" name="agregar_evento" class="btn btn-primary">Crear evento</button>
+                    </form>
+                </div>
+
+                <div class="card">
+                    <h3>🗓️ Eventos (<?= count($eventos_lista) ?>)</h3>
+                    <div style="overflow-x:auto;">
+                        <table id="tabla-eventos">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Nombre</th>
+                                    <th>Slug</th>
+                                    <th>Participantes</th>
+                                    <th>Recursos</th>
+                                    <th>Estado</th>
+                                    <th>Default</th>
+                                    <th>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($eventos_lista as $ev): ?>
+                                <tr>
+                                    <td><?= (int) $ev['id'] ?></td>
+                                    <td><strong><?= htmlspecialchars($ev['nombre']) ?></strong></td>
+                                    <td><code style="font-size:12px;color:#6b7280;"><?= htmlspecialchars($ev['slug']) ?></code></td>
+                                    <td><?= (int) $ev['total_p'] ?></td>
+                                    <td><?= (int) $ev['total_r'] ?></td>
+                                    <td>
+                                        <span class="badge <?= $ev['activo'] ? 'badge-ok' : 'badge-off' ?>">
+                                            <?= $ev['activo'] ? 'Activo' : 'Inactivo' ?>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <?php if ($ev['es_default']): ?>
+                                        <span class="badge badge-warn">Default</span>
+                                        <?php else: ?>
+                                        <span style="color:#ccc;">—</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td class="td-actions">
+                                        <button type="button" class="btn btn-warning btn-sm"
+                                            onclick="abrirEditarEv(<?= (int)$ev['id'] ?>, <?= htmlspecialchars(json_encode($ev['nombre'])) ?>, <?= htmlspecialchars(json_encode($ev['slug'])) ?>, <?= (int)$ev['activo'] ?>)">
+                                            Editar
+                                        </button>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Modal editar evento -->
+                <div class="modal-overlay" id="modal-ev">
+                    <div class="modal">
+                        <h4>✏️ Editar evento</h4>
+                        <form method="POST">
+                            <input type="hidden" name="ev_id" id="edit-ev-id">
+                            <div class="form-row">
+                                <div class="field">
+                                    <label>Nombre</label>
+                                    <input type="text" name="ev_nombre" id="edit-ev-nombre" required>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="field">
+                                    <label>Slug (URL)</label>
+                                    <input type="text" name="ev_slug" id="edit-ev-slug" required>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="field">
+                                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                                        <input type="checkbox" name="ev_activo" id="edit-ev-activo" value="1" style="width:auto;"> Activo
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="modal-actions">
+                                <button type="button" class="btn" style="background:#f3f4f6;color:#374151;" onclick="cerrarModal('modal-ev')">Cancelar</button>
+                                <button type="submit" name="editar_evento" class="btn btn-primary">Guardar cambios</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
                 <!-- ============ TAB CONFIGURACION ============ -->
             <?php elseif ($tab === 'configuracion'): ?>
 
                 <div class="card">
-                    <h3>🎨 Configuración general</h3>
+                    <h3>🎨 Configuración del evento</h3>
+                    <p style="font-size:13px;color:#6b7280;margin-bottom:18px;">
+                        Editando: <strong><?= htmlspecialchars($admin_evento_nombre) ?></strong>
+                    </p>
                     <form method="POST" enctype="multipart/form-data">
                         <div class="form-row">
                             <div class="field">
-                                <label>Título del evento</label>
+                                <label>Título visible en login (titulo_login)</label>
                                 <input type="text" name="titulo_evento"
-                                    value="<?= htmlspecialchars($config['titulo_evento'] ?? '') ?>">
+                                    value="<?= htmlspecialchars($config['titulo_evento'] ?? '') ?>"
+                                    placeholder="<?= htmlspecialchars($admin_evento_nombre) ?>">
                             </div>
                         </div>
                         <div class="form-row">
@@ -1893,6 +2169,8 @@ if ($tab === 'password') {
                                         <img src="uploads/<?= htmlspecialchars($config['banner']) ?>"
                                             style="max-width:100%;max-height:180px;border-radius:6px;border:1px solid #ddd;">
                                     </div>
+                                <?php else: ?>
+                                    <p style="font-size:12px;color:#aaa;margin-top:8px;">Sin banner configurado para este evento.</p>
                                 <?php endif; ?>
                             </div>
                         </div>
@@ -1947,6 +2225,23 @@ if ($tab === 'password') {
 
             function cerrarModal(id) {
                 document.getElementById(id).classList.remove('open');
+            }
+
+            function abrirEditarEv(id, nombre, slug, activo) {
+                document.getElementById('edit-ev-id').value    = id;
+                document.getElementById('edit-ev-nombre').value = nombre;
+                document.getElementById('edit-ev-slug').value   = slug;
+                document.getElementById('edit-ev-activo').checked = activo == 1;
+                document.getElementById('modal-ev').classList.add('open');
+            }
+
+            function autoSlug(valor) {
+                var slug = valor.toLowerCase()
+                    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+                    .replace(/[^a-z0-9]+/g, '-')
+                    .replace(/^-+|-+$/g, '');
+                var el = document.getElementById('nuevo-ev-slug');
+                if (el) el.value = slug;
             }
 
             function abrirModalVideos() {

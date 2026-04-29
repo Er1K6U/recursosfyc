@@ -22,6 +22,8 @@ Las migraciones se aplican **en orden numérico ascendente**.
 |---|---------|-------------|
 | 001 | `001_video_restricted_access.sql` | Agrega columnas de video a `recursos`; crea `tokens_video` y `recurso_permisos_video` |
 | 002 | `002_video_duration_decimal.sql` | Cambia `video_expira_horas` de `SMALLINT` a `DECIMAL(6,4)` para soportar duraciones sub-hora (ej: 5 minutos = 0.0833) |
+| 003 | `003_video_analytics.sql` | Crea `video_visualizaciones` para registrar sesiones de reproducción con heartbeat |
+| 004 | `004_multi_evento_fase0.sql` | **Fase 0 multi-evento**: crea `eventos`, `personas`, `evento_participantes`; migra `participantes` preservando IDs; agrega `evento_id` a `recursos`, `certificados`, `accesos` |
 
 ---
 
