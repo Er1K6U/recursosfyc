@@ -1,0 +1,10 @@
+# ================================================================
+#  Carpeta de entregas privadas — recursosfyc
+#  Apache 2.4+
+#
+#  Deniega TODO acceso HTTP directo.
+#  Las entregas se sirven exclusivamente mediante descargar_entrega.php
+#  que verifica sesión y rol antes de hacer readfile().
+# ================================================================
+
+Require all denied

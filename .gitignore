@@ -4,7 +4,10 @@ db.php
 .php-ini
 
 # ── Archivos subidos por usuarios (binarios, PDFs, videos, etc.) ─────────────
-uploads/
+uploads/*
+!uploads/trabajo/
+!uploads/trabajo/.htaccess
+!uploads/trabajo/.gitkeep
 
 # ── Videos privados — excluir binarios, conservar .htaccess y .gitkeep ───────
 private_videos/*.mp4
@@ -14,6 +17,11 @@ private_videos/*.mov
 private_videos/*.avi
 private_videos/*.mkv
 private_videos/*.m4v
+
+# ── Entregas privadas — excluir archivos subidos, conservar estructura ────────
+private_entregas/*
+!private_entregas/.htaccess
+!private_entregas/.gitkeep
 
 # ── Librería de tercero incluida manualmente ─────────────────────────────────
 libs/

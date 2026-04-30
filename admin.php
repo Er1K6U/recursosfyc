@@ -11,8 +11,10 @@ if (!isset($_SESSION['admin_id'])) {
         $stmt->execute([$usuario]);
         $admin = $stmt->fetch();
         if ($admin && password_verify($password, $admin['password'])) {
-            $_SESSION['admin_id'] = $admin['id'];
+            $_SESSION['admin_id']      = $admin['id'];
             $_SESSION['admin_usuario'] = $admin['usuario'];
+            $_SESSION['admin_rol']     = !empty($admin['rol'])    ? $admin['rol']    : 'admin';
+            $_SESSION['admin_nombre']  = !empty($admin['nombre']) ? $admin['nombre'] : $admin['usuario'];
             header('Location: admin.php');
             exit;
         } else {
@@ -154,6 +156,11 @@ if (!isset($_SESSION['admin_id'])) {
     }
 }
 
+// Rol del admin autenticado — disponible en todo el resto del archivo
+$admin_rol    = $_SESSION['admin_rol'] ?? 'admin';
+$is_admin     = $admin_rol === 'admin';
+$is_evaluador = $admin_rol === 'evaluador';
+
 // Cerrar sesión admin
 if (isset($_GET['logout'])) {
     session_destroy();
@@ -230,15 +237,33 @@ if ($tab === 'eventos') {
 
     // Editar evento
     if (isset($_POST['editar_evento'])) {
-        $ev_id     = (int) ($_POST['ev_id'] ?? 0);
-        $ev_nombre = trim($_POST['ev_nombre'] ?? '');
-        $ev_slug   = strtolower(trim($_POST['ev_slug'] ?? ''));
-        $ev_activo = isset($_POST['ev_activo']) ? 1 : 0;
+        $ev_id             = (int) ($_POST['ev_id'] ?? 0);
+        $ev_nombre         = trim($_POST['ev_nombre'] ?? '');
+        $ev_slug           = strtolower(trim($_POST['ev_slug'] ?? ''));
+        $ev_activo         = isset($_POST['ev_activo'])     ? 1 : 0;
+        $ev_finalizado     = isset($_POST['ev_finalizado']) ? 1 : 0;
+        $ev_msg_finalizado = trim($_POST['ev_mensaje_finalizado'] ?? '') ?: null;
+
         if ($ev_id && $ev_nombre && $ev_slug) {
             $ev_slug = preg_replace('/[^a-z0-9\-]/', '-', $ev_slug);
             try {
-                $pdo->prepare("UPDATE eventos SET nombre = ?, slug = ?, activo = ? WHERE id = ?")
-                    ->execute([$ev_nombre, $ev_slug, $ev_activo, $ev_id]);
+                $curr_stmt = $pdo->prepare("SELECT finalizado FROM eventos WHERE id = ?");
+                $curr_stmt->execute([$ev_id]);
+                $was_finalizado = (int) ($curr_stmt->fetchColumn() ?? 0);
+
+                if ($ev_finalizado === 1 && $was_finalizado === 0) {
+                    // Transición 0→1: sellar finalizado_en = NOW()
+                    $pdo->prepare("UPDATE eventos SET nombre=?, slug=?, activo=?, finalizado=1, finalizado_en=NOW(), mensaje_finalizado=? WHERE id=?")
+                        ->execute([$ev_nombre, $ev_slug, $ev_activo, $ev_msg_finalizado, $ev_id]);
+                } elseif ($ev_finalizado === 0) {
+                    // Desmarcar: limpiar timestamp
+                    $pdo->prepare("UPDATE eventos SET nombre=?, slug=?, activo=?, finalizado=0, finalizado_en=NULL, mensaje_finalizado=? WHERE id=?")
+                        ->execute([$ev_nombre, $ev_slug, $ev_activo, $ev_msg_finalizado, $ev_id]);
+                } else {
+                    // Sigue finalizado: conservar finalizado_en existente
+                    $pdo->prepare("UPDATE eventos SET nombre=?, slug=?, activo=?, finalizado=1, mensaje_finalizado=? WHERE id=?")
+                        ->execute([$ev_nombre, $ev_slug, $ev_activo, $ev_msg_finalizado, $ev_id]);
+                }
                 $_SESSION['flash']['ok'] = 'Evento actualizado.';
             } catch (PDOException $e) {
                 $_SESSION['flash']['err'] = 'Error al actualizar: el slug podría ya existir.';
@@ -733,6 +758,359 @@ if ($tab === 'analytics_videos') {
     $av_metrics = $av_metrics_stmt->fetch();
 }
 
+// ===================== EVALUADORES =====================
+if ($tab === 'evaluadores') {
+
+    if (!$is_admin) {
+        $error_msg = 'Acceso denegado.';
+    } else {
+
+        // ── Crear evaluador ───────────────────────────────────────
+        if (isset($_POST['crear_evaluador'])) {
+            $ev_usu  = trim($_POST['ev_usuario'] ?? '');
+            $ev_pass = $_POST['ev_password'] ?? '';
+            $ev_nom  = trim($_POST['ev_nombre'] ?? '');
+
+            if ($ev_usu && strlen($ev_pass) >= 6) {
+                try {
+                    $hash = password_hash($ev_pass, PASSWORD_DEFAULT);
+                    $pdo->prepare(
+                        "INSERT INTO admins (usuario, password, rol, nombre) VALUES (?, ?, 'evaluador', ?)"
+                    )->execute([$ev_usu, $hash, $ev_nom ?: $ev_usu]);
+                    $_SESSION['flash']['ok'] = "Evaluador '{$ev_usu}' creado correctamente.";
+                } catch (PDOException $e) {
+                    $_SESSION['flash']['err'] = 'El usuario ya existe o los datos son inválidos.';
+                }
+            } else {
+                $_SESSION['flash']['err'] = 'Usuario obligatorio y contraseña mínimo 6 caracteres.';
+            }
+            header('Location: admin.php?tab=evaluadores');
+            exit;
+        }
+
+        // ── Actualizar asignaciones de eventos de un evaluador ────
+        if (isset($_POST['actualizar_asignaciones'])) {
+            $asig_admin_id = (int) ($_POST['asig_admin_id'] ?? 0);
+            $eventos_sel   = array_map('intval', (array) ($_POST['asig_eventos'] ?? []));
+
+            if ($asig_admin_id) {
+                // Solo actuar si el ID corresponde a un evaluador real
+                $stmt_chk = $pdo->prepare(
+                    "SELECT id FROM admins WHERE id = ? AND rol = 'evaluador'"
+                );
+                $stmt_chk->execute([$asig_admin_id]);
+                if ($stmt_chk->fetch()) {
+                    $pdo->prepare(
+                        "DELETE FROM trabajo_evaluador_eventos WHERE admin_id = ?"
+                    )->execute([$asig_admin_id]);
+
+                    if (!empty($eventos_sel)) {
+                        $stmt_ins = $pdo->prepare(
+                            "INSERT IGNORE INTO trabajo_evaluador_eventos (admin_id, evento_id)
+                             VALUES (?, ?)"
+                        );
+                        foreach ($eventos_sel as $eid) {
+                            if ($eid > 0) { $stmt_ins->execute([$asig_admin_id, $eid]); }
+                        }
+                    }
+                    $_SESSION['flash']['ok'] = 'Asignaciones de eventos actualizadas.';
+                }
+            }
+            header('Location: admin.php?tab=evaluadores');
+            exit;
+        }
+
+        // ── Eliminar evaluador ────────────────────────────────────
+        if (isset($_POST['eliminar_evaluador'])) {
+            $del_id = (int) ($_POST['evaluador_id'] ?? 0);
+            // Nunca eliminar al admin actual ni a cuentas que no sean evaluadores
+            if ($del_id && $del_id !== (int) $_SESSION['admin_id']) {
+                $pdo->prepare(
+                    "DELETE FROM admins WHERE id = ? AND rol = 'evaluador'"
+                )->execute([$del_id]);
+                // Las filas en trabajo_evaluador_eventos se eliminan en CASCADE (fk_tee_admin)
+                $_SESSION['flash']['ok'] = 'Evaluador eliminado.';
+            }
+            header('Location: admin.php?tab=evaluadores');
+            exit;
+        }
+
+    } // end $is_admin check
+
+    // ── Data loading para la vista ────────────────────────────────
+    $evaluadores_lista = $pdo->query(
+        "SELECT a.id, a.usuario, a.nombre, a.created_at,
+                GROUP_CONCAT(tee.evento_id ORDER BY tee.evento_id) AS eventos_asignados_ids
+         FROM   admins a
+         LEFT   JOIN trabajo_evaluador_eventos tee ON tee.admin_id = a.id
+         WHERE  a.rol = 'evaluador'
+         GROUP  BY a.id
+         ORDER  BY a.created_at ASC"
+    )->fetchAll();
+
+    // Mapa rápido id→nombre para renderizar badges de eventos asignados
+    $eventos_mapa = [];
+    foreach ($todos_eventos as $_tev) {
+        $eventos_mapa[(int) $_tev['id']] = $_tev['nombre'];
+    }
+}
+
+// ===================== TRABAJO INTEGRADOR =====================
+if ($tab === 'trabajo_integrador') {
+
+    // ── Guardar / actualizar configuración ────────────────────────
+    if (isset($_POST['guardar_trabajo_config']) && $is_admin) {
+        $tc_titulo    = trim($_POST['tc_titulo'] ?? '') ?: 'Trabajo integrador final';
+        $tc_desc      = trim($_POST['tc_descripcion'] ?? '');
+        $tc_activo    = isset($_POST['tc_activo'])             ? 1 : 0;
+        $tc_reentrega = isset($_POST['tc_permite_reentrega'])  ? 1 : 0;
+        $tc_cal_max   = min(100, max(0, (float) ($_POST['tc_calificacion_maxima'] ?? 100)));
+        $tc_fecha_raw = trim($_POST['tc_fecha_limite'] ?? '');
+        $tc_fecha     = $tc_fecha_raw
+            ? date('Y-m-d H:i:s', strtotime($tc_fecha_raw))
+            : null;
+
+        $pdo->prepare(
+            "INSERT INTO trabajo_integrador_config
+                 (evento_id, activo, titulo, descripcion, fecha_limite,
+                  permite_reentrega, calificacion_maxima)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                 activo              = VALUES(activo),
+                 titulo              = VALUES(titulo),
+                 descripcion         = VALUES(descripcion),
+                 fecha_limite        = VALUES(fecha_limite),
+                 permite_reentrega   = VALUES(permite_reentrega),
+                 calificacion_maxima = VALUES(calificacion_maxima)"
+        )->execute([
+            $admin_evento_id, $tc_activo, $tc_titulo, $tc_desc ?: null,
+            $tc_fecha, $tc_reentrega, $tc_cal_max,
+        ]);
+
+        $_SESSION['flash']['ok'] = 'Configuración del trabajo integrador guardada.';
+        header('Location: admin.php?tab=trabajo_integrador');
+        exit;
+    }
+
+    // ── Subir recurso base ────────────────────────────────────────
+    if (isset($_POST['subir_trabajo_recurso']) && $is_admin) {
+
+        // Verificar que ya existe una config para este evento
+        $stmt_check_conf = $pdo->prepare(
+            "SELECT id FROM trabajo_integrador_config WHERE evento_id = ? LIMIT 1"
+        );
+        $stmt_check_conf->execute([$admin_evento_id]);
+        $conf_row = $stmt_check_conf->fetch();
+
+        if (!$conf_row) {
+            $_SESSION['flash']['err'] = 'Guarda primero la configuración del trabajo antes de subir recursos.';
+            header('Location: admin.php?tab=trabajo_integrador');
+            exit;
+        }
+
+        $tr_nombre      = trim($_POST['tr_nombre'] ?? '');
+        $tr_descripcion = trim($_POST['tr_descripcion'] ?? '');
+        $allowed_ext    = ['pdf','doc','docx','xls','xlsx','zip','ppt','pptx'];
+        $allowed_mime   = [
+            'application/pdf',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/zip',
+            'application/x-zip-compressed',
+            'application/vnd.ms-powerpoint',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        ];
+        $file = $_FILES['tr_archivo'] ?? null;
+
+        if (!$tr_nombre) {
+            $_SESSION['flash']['err'] = 'El nombre del recurso es obligatorio.';
+            header('Location: admin.php?tab=trabajo_integrador'); exit;
+        }
+        if (!$file || $file['error'] !== UPLOAD_ERR_OK) {
+            $_SESSION['flash']['err'] = 'Error al recibir el archivo (código: ' . ($file['error'] ?? '?') . ').';
+            header('Location: admin.php?tab=trabajo_integrador'); exit;
+        }
+
+        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        if (!in_array($ext, $allowed_ext)) {
+            $_SESSION['flash']['err'] = 'Extensión no permitida. Usa: ' . implode(', ', $allowed_ext) . '.';
+            header('Location: admin.php?tab=trabajo_integrador'); exit;
+        }
+        if ($file['size'] > 25 * 1024 * 1024) {
+            $_SESSION['flash']['err'] = 'El archivo supera el límite de 25 MB.';
+            header('Location: admin.php?tab=trabajo_integrador'); exit;
+        }
+
+        // Validar MIME real (no solo la extensión)
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mime  = finfo_file($finfo, $file['tmp_name']);
+        finfo_close($finfo);
+        if (!in_array($mime, $allowed_mime)) {
+            $_SESSION['flash']['err'] = 'Tipo de archivo no permitido (contenido inválido).';
+            header('Location: admin.php?tab=trabajo_integrador'); exit;
+        }
+
+        // Nombre seguro: basename() elimina cualquier componente de directorio
+        $safe_base = preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', basename($file['name']));
+        $filename  = 'trabajo_' . $admin_evento_id . '_' . time() . '_' . $safe_base;
+        $destino   = 'uploads/trabajo/' . $filename;
+
+        if (!is_dir('uploads/trabajo')) { mkdir('uploads/trabajo', 0755, true); }
+
+        if (!move_uploaded_file($file['tmp_name'], $destino)) {
+            $_SESSION['flash']['err'] = 'No se pudo guardar el archivo en el servidor.';
+            header('Location: admin.php?tab=trabajo_integrador'); exit;
+        }
+
+        $pdo->prepare(
+            "INSERT INTO trabajo_integrador_recursos
+                 (config_id, evento_id, nombre, descripcion, archivo, tipo, tamanio)
+             VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )->execute([
+            $conf_row['id'], $admin_evento_id, $tr_nombre,
+            $tr_descripcion ?: null, $filename, $ext, $file['size'],
+        ]);
+
+        $_SESSION['flash']['ok'] = "Recurso «{$tr_nombre}» subido correctamente.";
+        header('Location: admin.php?tab=trabajo_integrador');
+        exit;
+    }
+
+    // ── Eliminar recurso base ─────────────────────────────────────
+    if (isset($_POST['eliminar_trabajo_recurso']) && $is_admin) {
+        $del_tr_id = (int) ($_POST['tr_recurso_id'] ?? 0);
+        if ($del_tr_id) {
+            // Verificar que el recurso pertenece al evento activo (evita borrado cruzado)
+            $stmt_del = $pdo->prepare(
+                "SELECT r.archivo
+                 FROM   trabajo_integrador_recursos r
+                 JOIN   trabajo_integrador_config   c ON c.id = r.config_id
+                 WHERE  r.id = ? AND c.evento_id = ? LIMIT 1"
+            );
+            $stmt_del->execute([$del_tr_id, $admin_evento_id]);
+            $del_row = $stmt_del->fetch();
+            if ($del_row) {
+                $del_path = 'uploads/trabajo/' . basename($del_row['archivo']);
+                if (file_exists($del_path)) { unlink($del_path); }
+                $pdo->prepare("DELETE FROM trabajo_integrador_recursos WHERE id = ?")
+                    ->execute([$del_tr_id]);
+                $_SESSION['flash']['ok'] = 'Recurso eliminado.';
+            }
+        }
+        header('Location: admin.php?tab=trabajo_integrador');
+        exit;
+    }
+
+    // ── Evaluar entrega ───────────────────────────────────────────
+    if (isset($_POST['evaluar_entrega']) && ($is_admin || $is_evaluador)) {
+        $ev_id        = (int) ($_POST['entrega_id'] ?? 0);
+        $ev_estado    = $_POST['ev_estado'] ?? '';
+        $ev_cal_raw   = trim($_POST['ev_calificacion'] ?? '');
+        $ev_coment    = trim($_POST['ev_comentarios'] ?? '');
+        $estados_ok   = ['revisado', 'requiere_ajustes'];
+
+        if (!$ev_id || !in_array($ev_estado, $estados_ok)) {
+            $_SESSION['flash']['err'] = 'Datos de evaluación inválidos.';
+            header('Location: admin.php?tab=trabajo_integrador'); exit;
+        }
+
+        // Leer calificacion_maxima del config para validar rango
+        $stmt_cal_max = $pdo->prepare(
+            "SELECT calificacion_maxima
+             FROM   trabajo_integrador_config
+             WHERE  evento_id = ? LIMIT 1"
+        );
+        $stmt_cal_max->execute([$admin_evento_id]);
+        $cal_max_row = $stmt_cal_max->fetch();
+        $cal_max     = $cal_max_row ? (float) $cal_max_row['calificacion_maxima'] : 100.0;
+
+        $ev_cal = $ev_cal_raw !== '' ? min($cal_max, max(0, (float) $ev_cal_raw)) : null;
+
+        // Verificar que la entrega pertenece al evento activo
+        $stmt_ent_chk = $pdo->prepare(
+            "SELECT id FROM trabajo_integrador_entregas WHERE id = ? AND evento_id = ? LIMIT 1"
+        );
+        $stmt_ent_chk->execute([$ev_id, $admin_evento_id]);
+        if (!$stmt_ent_chk->fetch()) {
+            $_SESSION['flash']['err'] = 'Entrega no encontrada en este evento.';
+            header('Location: admin.php?tab=trabajo_integrador'); exit;
+        }
+
+        $pdo->prepare(
+            "UPDATE trabajo_integrador_entregas
+             SET    estado                = ?,
+                    calificacion          = ?,
+                    comentarios_evaluador = ?,
+                    evaluador_id          = ?,
+                    fecha_evaluacion      = NOW()
+             WHERE  id = ?"
+        )->execute([$ev_estado, $ev_cal, $ev_coment ?: null, $_SESSION['admin_id'], $ev_id]);
+
+        $_SESSION['flash']['ok'] = 'Evaluación guardada correctamente.';
+        header('Location: admin.php?tab=trabajo_integrador'); exit;
+    }
+
+    // ── Data loading ──────────────────────────────────────────────
+    $trabajo_config   = null;
+    $trabajo_recursos = [];
+    $trabajo_entregas = [];
+
+    $stmt_tc = $pdo->prepare(
+        "SELECT * FROM trabajo_integrador_config WHERE evento_id = ? LIMIT 1"
+    );
+    $stmt_tc->execute([$admin_evento_id]);
+    $trabajo_config = $stmt_tc->fetch();
+
+    if ($trabajo_config) {
+        $stmt_tr = $pdo->prepare(
+            "SELECT * FROM trabajo_integrador_recursos
+             WHERE  config_id = ? AND activo = 1
+             ORDER  BY orden ASC, creado_en ASC"
+        );
+        $stmt_tr->execute([$trabajo_config['id']]);
+        $trabajo_recursos = $stmt_tr->fetchAll();
+    }
+
+    // Entregas: visible para admin (todas) y evaluador (mismo evento si asignado)
+    if ($is_admin || $is_evaluador) {
+        // Evaluador: solo puede ver si está asignado a este evento
+        $puede_ver_entregas = $is_admin;
+        if ($is_evaluador) {
+            $stmt_asig_chk = $pdo->prepare(
+                "SELECT id FROM trabajo_evaluador_eventos
+                 WHERE admin_id = ? AND evento_id = ? LIMIT 1"
+            );
+            $stmt_asig_chk->execute([$_SESSION['admin_id'], $admin_evento_id]);
+            $puede_ver_entregas = (bool) $stmt_asig_chk->fetch();
+        }
+
+        if ($puede_ver_entregas) {
+            $stmt_ent = $pdo->prepare(
+                "SELECT te.id,
+                        te.participante_id,
+                        te.archivo,
+                        te.nombre_original,
+                        te.estado,
+                        te.calificacion,
+                        te.comentarios_evaluador,
+                        te.fecha_entrega,
+                        te.fecha_evaluacion,
+                        p.nombre    AS participante_nombre,
+                        p.documento AS participante_documento
+                 FROM   trabajo_integrador_entregas te
+                 JOIN   evento_participantes ep ON ep.id  = te.participante_id
+                 JOIN   personas             p  ON p.id  = te.persona_id
+                 WHERE  te.evento_id = ?
+                 ORDER  BY te.fecha_entrega DESC"
+            );
+            $stmt_ent->execute([$admin_evento_id]);
+            $trabajo_entregas = $stmt_ent->fetchAll();
+        }
+    }
+}
+
 // ===================== CAMBIAR PASSWORD =====================
 if ($tab === 'password') {
     if (isset($_POST['cambiar_password'])) {
@@ -1017,6 +1395,11 @@ if ($tab === 'password') {
             color: #856404;
         }
 
+        .badge-end {
+            background: #f8d0d4;
+            color: #6b0f1a;
+        }
+
         .accion-login {
             color: #2980b9;
             font-weight: 600;
@@ -1237,6 +1620,12 @@ if ($tab === 'password') {
         <a href="admin.php?tab=configuracion" class="<?= $tab === 'configuracion' ? 'active' : '' ?>">🎨
             Configuración</a>
         <a href="admin.php?tab=password" class="<?= $tab === 'password' ? 'active' : '' ?>">🔑 Contraseña</a>
+        <?php if ($is_admin): ?>
+        <a href="admin.php?tab=evaluadores" class="<?= $tab === 'evaluadores' ? 'active' : '' ?>">👤 Evaluadores</a>
+        <?php endif; ?>
+        <?php if ($is_admin || $is_evaluador): ?>
+        <a href="admin.php?tab=trabajo_integrador" class="<?= $tab === 'trabajo_integrador' ? 'active' : '' ?>">📝 Trabajo Integrador</a>
+        <?php endif; ?>
     </div>
 
     <div class="main">
@@ -2135,9 +2524,13 @@ if ($tab === 'password') {
                                     <td><?= (int) $ev['total_p'] ?></td>
                                     <td><?= (int) $ev['total_r'] ?></td>
                                     <td>
-                                        <span class="badge <?= $ev['activo'] ? 'badge-ok' : 'badge-off' ?>">
-                                            <?= $ev['activo'] ? 'Activo' : 'Inactivo' ?>
-                                        </span>
+                                        <?php if ($ev['finalizado']): ?>
+                                            <span class="badge badge-end">Finalizado</span>
+                                        <?php elseif ($ev['activo']): ?>
+                                            <span class="badge badge-ok">Activo</span>
+                                        <?php else: ?>
+                                            <span class="badge badge-off">Inactivo</span>
+                                        <?php endif; ?>
                                     </td>
                                     <td>
                                         <?php if ($ev['es_default']): ?>
@@ -2148,7 +2541,7 @@ if ($tab === 'password') {
                                     </td>
                                     <td class="td-actions">
                                         <button type="button" class="btn btn-warning btn-sm"
-                                            onclick="abrirEditarEv(<?= (int)$ev['id'] ?>, <?= htmlspecialchars(json_encode($ev['nombre'])) ?>, <?= htmlspecialchars(json_encode($ev['slug'])) ?>, <?= (int)$ev['activo'] ?>)">
+                                            onclick="abrirEditarEv(<?= (int)$ev['id'] ?>, <?= htmlspecialchars(json_encode($ev['nombre'])) ?>, <?= htmlspecialchars(json_encode($ev['slug'])) ?>, <?= (int)$ev['activo'] ?>, <?= (int)$ev['finalizado'] ?>, <?= htmlspecialchars(json_encode($ev['mensaje_finalizado'] ?? '')) ?>)">
                                             Editar
                                         </button>
                                     </td>
@@ -2182,6 +2575,26 @@ if ($tab === 'password') {
                                     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
                                         <input type="checkbox" name="ev_activo" id="edit-ev-activo" value="1" style="width:auto;"> Activo
                                     </label>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="field">
+                                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                                        <input type="checkbox" name="ev_finalizado" id="edit-ev-finalizado" value="1"
+                                               style="width:auto;" onchange="toggleMensajeFinalizado(this.checked)">
+                                        <span style="color:#6b0f1a;font-weight:700;">🔒 Evento finalizado</span>
+                                    </label>
+                                    <p style="font-size:12px;color:#9ca3af;margin-top:4px;margin-left:24px;">
+                                        Los participantes verán una pantalla de cierre en lugar del contenido.
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="form-row" id="finalizado-msg-row" style="display:none;">
+                                <div class="field">
+                                    <label>Mensaje de finalización (opcional)</label>
+                                    <textarea name="ev_mensaje_finalizado" id="edit-ev-mensaje" rows="3"
+                                              style="width:100%;padding:8px 10px;border:1.5px solid #e5e7eb;border-radius:8px;font-size:13px;font-family:inherit;resize:vertical;"
+                                              placeholder="Gracias por participar. El contenido ya no está disponible."></textarea>
                                 </div>
                             </div>
                             <div class="modal-actions">
@@ -2229,6 +2642,436 @@ if ($tab === 'password') {
                 </div>
 
                 <!-- ============ TAB PASSWORD ============ -->
+            <!-- ============ TAB EVALUADORES ============ -->
+            <?php elseif ($tab === 'evaluadores'): ?>
+
+                <?php if (!$is_admin): ?>
+                    <div class="alert-err">⚠️ Acceso denegado.</div>
+                <?php else: ?>
+
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;margin-bottom:24px">
+
+                    <!-- Crear evaluador -->
+                    <div class="card">
+                        <h3>➕ Nuevo evaluador</h3>
+                        <form method="POST" style="margin-top:14px">
+                            <input type="hidden" name="crear_evaluador" value="1">
+                            <label>Nombre completo</label>
+                            <input type="text" name="ev_nombre" placeholder="Ej: María García" style="margin-bottom:12px">
+                            <label>Usuario (para el login)</label>
+                            <input type="text" name="ev_usuario" required placeholder="Ej: evaluador_maria" style="margin-bottom:12px">
+                            <label>Contraseña <small style="color:#9ca3af">(mín. 6 caracteres)</small></label>
+                            <input type="password" name="ev_password" required minlength="6" style="margin-bottom:16px">
+                            <button type="submit" class="btn btn-primary">Crear evaluador</button>
+                        </form>
+                    </div>
+
+                    <!-- Información contextual -->
+                    <div class="card" style="background:#f0fdf4;border:1px solid #bbf7d0">
+                        <h3 style="color:#166534">ℹ️ Sobre los evaluadores</h3>
+                        <p style="font-size:14px;color:#374151;line-height:1.75;margin-top:10px">
+                            Los evaluadores acceden con su usuario y contraseña al mismo panel de admin.<br><br>
+                            Solo pueden ver y calificar entregas del <strong>Trabajo integrador final</strong>
+                            en los eventos que tengan asignados.<br><br>
+                            Asigna los eventos desde la tabla de abajo antes de compartirles el acceso.
+                        </p>
+                    </div>
+
+                </div>
+
+                <!-- Tabla de evaluadores -->
+                <div class="card">
+                    <h3>👤 Evaluadores registrados</h3>
+
+                    <?php if (empty($evaluadores_lista)): ?>
+                        <p style="color:#9ca3af;font-size:14px;margin-top:14px">No hay evaluadores creados aún.</p>
+                    <?php else: ?>
+
+                    <div style="overflow-x:auto;margin-top:14px">
+                    <table class="tabla">
+                        <thead>
+                            <tr>
+                                <th>Nombre</th>
+                                <th>Usuario</th>
+                                <th>Eventos asignados</th>
+                                <th>Actualizar eventos</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($evaluadores_lista as $evl): ?>
+                            <?php
+                                $evl_ids = $evl['eventos_asignados_ids']
+                                    ? array_map('intval', explode(',', $evl['eventos_asignados_ids']))
+                                    : [];
+                            ?>
+                            <tr>
+                                <td><strong><?= htmlspecialchars($evl['nombre'] ?: $evl['usuario']) ?></strong></td>
+                                <td style="color:#6b7280;font-size:13px">@<?= htmlspecialchars($evl['usuario']) ?></td>
+
+                                <td>
+                                    <?php if (empty($evl_ids)): ?>
+                                        <em style="color:#9ca3af;font-size:13px">Sin eventos asignados</em>
+                                    <?php else: ?>
+                                        <?php foreach ($evl_ids as $asig_ev_id): ?>
+                                            <span class="badge-ok" style="display:inline-block;margin:2px 3px 2px 0;font-size:12px">
+                                                <?= htmlspecialchars($eventos_mapa[$asig_ev_id] ?? "Evento #{$asig_ev_id}") ?>
+                                            </span>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </td>
+
+                                <td>
+                                    <form method="POST" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+                                        <input type="hidden" name="actualizar_asignaciones" value="1">
+                                        <input type="hidden" name="asig_admin_id" value="<?= (int) $evl['id'] ?>">
+                                        <?php foreach ($todos_eventos as $tev): ?>
+                                            <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;white-space:nowrap">
+                                                <input type="checkbox"
+                                                       name="asig_eventos[]"
+                                                       value="<?= (int) $tev['id'] ?>"
+                                                       <?= in_array((int) $tev['id'], $evl_ids) ? 'checked' : '' ?>>
+                                                <?= htmlspecialchars($tev['nombre']) ?>
+                                            </label>
+                                        <?php endforeach; ?>
+                                        <button type="submit" class="btn btn-primary"
+                                                style="padding:5px 14px;font-size:13px">Guardar</button>
+                                    </form>
+                                </td>
+
+                                <td>
+                                    <form method="POST"
+                                          onsubmit="return confirm('¿Eliminar al evaluador <?= htmlspecialchars(addslashes($evl['usuario'])) ?>?')">
+                                        <input type="hidden" name="eliminar_evaluador" value="1">
+                                        <input type="hidden" name="evaluador_id" value="<?= (int) $evl['id'] ?>">
+                                        <button type="submit" class="btn"
+                                                style="background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;padding:5px 14px;font-size:13px">
+                                            Eliminar
+                                        </button>
+                                    </form>
+                                </td>
+
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    </div>
+                    <?php endif; ?>
+                </div>
+
+                <?php endif; // $is_admin ?>
+
+            <!-- ============ TAB TRABAJO INTEGRADOR ============ -->
+            <?php elseif ($tab === 'trabajo_integrador'): ?>
+
+                <?php if (!$is_admin && !$is_evaluador): ?>
+                    <div class="alert-err">⚠️ Acceso denegado.</div>
+                <?php else: ?>
+
+                <!-- Configuración del trabajo integrador -->
+                <div class="card" style="margin-bottom:24px">
+                    <h3>📋 Configuración del trabajo integrador</h3>
+                    <p style="font-size:13px;color:#6b7280;margin:8px 0 20px">Evento: <strong><?= htmlspecialchars($admin_evento_nombre) ?></strong></p>
+
+                    <?php if ($is_admin): ?>
+                    <form method="POST" style="display:grid;grid-template-columns:1fr 1fr;gap:16px 24px;align-items:start">
+                        <div style="grid-column:1/-1">
+                            <label>Título <span style="color:#dc2626">*</span></label>
+                            <input type="text" name="tc_titulo" required
+                                value="<?= htmlspecialchars($trabajo_config['titulo'] ?? 'Trabajo integrador final') ?>"
+                                style="width:100%;padding:10px 12px;border:1.5px solid #d1d5db;border-radius:7px;font-size:14px">
+                        </div>
+                        <div style="grid-column:1/-1">
+                            <label>Descripción / consigna</label>
+                            <textarea name="tc_descripcion" rows="4"
+                                style="width:100%;padding:10px 12px;border:1.5px solid #d1d5db;border-radius:7px;font-size:14px;resize:vertical"><?= htmlspecialchars($trabajo_config['descripcion'] ?? '') ?></textarea>
+                        </div>
+                        <div>
+                            <label>Fecha límite de entrega</label>
+                            <input type="datetime-local" name="tc_fecha_limite"
+                                value="<?= $trabajo_config && $trabajo_config['fecha_limite'] ? date('Y-m-d\TH:i', strtotime($trabajo_config['fecha_limite'])) : '' ?>"
+                                style="width:100%;padding:10px 12px;border:1.5px solid #d1d5db;border-radius:7px;font-size:14px">
+                            <small style="color:#6b7280;font-size:12px">Entregas posteriores se marcan como tardías (no se bloquean)</small>
+                        </div>
+                        <div>
+                            <label>Calificación máxima (0–100)</label>
+                            <input type="number" name="tc_calificacion_maxima" min="0" max="100" step="0.5"
+                                value="<?= htmlspecialchars($trabajo_config['calificacion_maxima'] ?? '100') ?>"
+                                style="width:100%;padding:10px 12px;border:1.5px solid #d1d5db;border-radius:7px;font-size:14px">
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;padding-top:6px">
+                            <input type="checkbox" name="tc_activo" id="tc_activo" value="1"
+                                <?= (!empty($trabajo_config['activo'])) ? 'checked' : '' ?>
+                                style="width:16px;height:16px;accent-color:#7b1a2e">
+                            <label for="tc_activo" style="margin:0;font-weight:400;cursor:pointer">Módulo activo (visible para participantes)</label>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;padding-top:6px">
+                            <input type="checkbox" name="tc_permite_reentrega" id="tc_permite_reentrega" value="1"
+                                <?= (!empty($trabajo_config['permite_reentrega'])) ? 'checked' : '' ?>
+                                style="width:16px;height:16px;accent-color:#7b1a2e">
+                            <label for="tc_permite_reentrega" style="margin:0;font-weight:400;cursor:pointer">Permitir reentregas (hasta que sea aprobado)</label>
+                        </div>
+                        <div style="grid-column:1/-1;padding-top:8px">
+                            <button type="submit" name="guardar_trabajo_config"
+                                style="background:#7b1a2e;color:#fff;border:none;border-radius:7px;padding:10px 24px;font-size:14px;font-weight:600;cursor:pointer">
+                                💾 Guardar configuración
+                            </button>
+                        </div>
+                    </form>
+                    <?php else: /* evaluador — solo lectura */ ?>
+                    <?php if ($trabajo_config): ?>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 32px;font-size:14px">
+                        <div><span style="color:#6b7280">Título:</span> <strong><?= htmlspecialchars($trabajo_config['titulo']) ?></strong></div>
+                        <div><span style="color:#6b7280">Estado:</span>
+                            <?php if ($trabajo_config['activo']): ?>
+                                <span style="background:#dcfce7;color:#166534;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600">Activo</span>
+                            <?php else: ?>
+                                <span style="background:#f3f4f6;color:#6b7280;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600">Inactivo</span>
+                            <?php endif; ?>
+                        </div>
+                        <?php if ($trabajo_config['fecha_limite']): ?>
+                        <div><span style="color:#6b7280">Fecha límite:</span> <?= date('d/m/Y H:i', strtotime($trabajo_config['fecha_limite'])) ?></div>
+                        <?php endif; ?>
+                        <div><span style="color:#6b7280">Cal. máxima:</span> <?= htmlspecialchars($trabajo_config['calificacion_maxima']) ?></div>
+                        <div><span style="color:#6b7280">Reentregas:</span> <?= $trabajo_config['permite_reentrega'] ? 'Permitidas' : 'No permitidas' ?></div>
+                        <?php if ($trabajo_config['descripcion']): ?>
+                        <div style="grid-column:1/-1"><span style="color:#6b7280">Consigna:</span>
+                            <p style="margin-top:6px;white-space:pre-wrap;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px 14px"><?= htmlspecialchars($trabajo_config['descripcion']) ?></p>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                    <?php else: ?>
+                        <p style="color:#9ca3af;font-size:14px;margin-top:12px">El administrador aún no configuró el trabajo integrador para este evento.</p>
+                    <?php endif; ?>
+                    <?php endif; ?>
+                </div>
+
+                <!-- Recursos base -->
+                <div class="card" style="margin-bottom:24px">
+                    <h3>📎 Recursos base del trabajo</h3>
+                    <p style="font-size:13px;color:#6b7280;margin:8px 0 20px">Archivos de referencia disponibles para los participantes (PDF, Word, Excel, PPT, ZIP — máx. 25 MB)</p>
+
+                    <?php if ($is_admin): ?>
+                    <?php if (!$trabajo_config): ?>
+                        <div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:7px;padding:12px 16px;font-size:13px;color:#92400e;margin-bottom:20px">
+                            ⚠️ Guarda primero la configuración del trabajo para poder subir recursos.
+                        </div>
+                    <?php else: ?>
+                    <form method="POST" enctype="multipart/form-data"
+                          style="display:grid;grid-template-columns:1fr 1fr;gap:14px 24px;align-items:end;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid #e5e7eb">
+                        <div>
+                            <label>Nombre del recurso <span style="color:#dc2626">*</span></label>
+                            <input type="text" name="tr_nombre" required placeholder="Ej: Plantilla informe final"
+                                style="width:100%;padding:10px 12px;border:1.5px solid #d1d5db;border-radius:7px;font-size:14px">
+                        </div>
+                        <div>
+                            <label>Archivo <span style="color:#dc2626">*</span></label>
+                            <input type="file" name="tr_archivo" required accept=".pdf,.doc,.docx,.xls,.xlsx,.zip,.ppt,.pptx"
+                                style="width:100%;padding:8px 12px;border:1.5px solid #d1d5db;border-radius:7px;font-size:14px;background:#fff">
+                        </div>
+                        <div style="grid-column:1/-1">
+                            <label>Descripción (opcional)</label>
+                            <input type="text" name="tr_descripcion" placeholder="Breve descripción del archivo"
+                                style="width:100%;padding:10px 12px;border:1.5px solid #d1d5db;border-radius:7px;font-size:14px">
+                        </div>
+                        <div style="grid-column:1/-1">
+                            <button type="submit" name="subir_trabajo_recurso"
+                                style="background:#7b1a2e;color:#fff;border:none;border-radius:7px;padding:10px 22px;font-size:14px;font-weight:600;cursor:pointer">
+                                ⬆️ Subir recurso
+                            </button>
+                        </div>
+                    </form>
+                    <?php endif; ?>
+                    <?php endif; ?>
+
+                    <?php if (empty($trabajo_recursos)): ?>
+                        <p style="color:#9ca3af;font-size:14px;margin-top:<?= $is_admin ? '0' : '8' ?>px">No hay recursos cargados para este evento.</p>
+                    <?php else: ?>
+                    <div style="overflow-x:auto">
+                    <table style="width:100%;border-collapse:collapse;font-size:13px">
+                        <thead>
+                            <tr style="background:#f3f4f6;color:#374151;text-align:left">
+                                <th style="padding:10px 14px;border-bottom:1px solid #e5e7eb">Nombre</th>
+                                <th style="padding:10px 14px;border-bottom:1px solid #e5e7eb">Tipo</th>
+                                <th style="padding:10px 14px;border-bottom:1px solid #e5e7eb">Tamaño</th>
+                                <th style="padding:10px 14px;border-bottom:1px solid #e5e7eb">Descripción</th>
+                                <?php if ($is_admin): ?><th style="padding:10px 14px;border-bottom:1px solid #e5e7eb">Acción</th><?php endif; ?>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($trabajo_recursos as $tr_rec): ?>
+                            <tr style="border-bottom:1px solid #f3f4f6">
+                                <td style="padding:10px 14px;font-weight:500"><?= htmlspecialchars($tr_rec['nombre']) ?></td>
+                                <td style="padding:10px 14px;text-transform:uppercase;color:#6b7280;font-size:12px"><?= htmlspecialchars($tr_rec['tipo']) ?></td>
+                                <td style="padding:10px 14px;color:#6b7280;white-space:nowrap">
+                                    <?php
+                                    $sz = (int) $tr_rec['tamanio'];
+                                    echo $sz > 1048576
+                                        ? round($sz / 1048576, 1) . ' MB'
+                                        : round($sz / 1024, 0) . ' KB';
+                                    ?>
+                                </td>
+                                <td style="padding:10px 14px;color:#6b7280"><?= htmlspecialchars($tr_rec['descripcion'] ?? '—') ?></td>
+                                <?php if ($is_admin): ?>
+                                <td style="padding:10px 14px">
+                                    <form method="POST" onsubmit="return confirm('¿Eliminar este recurso?')">
+                                        <input type="hidden" name="tr_recurso_id" value="<?= (int) $tr_rec['id'] ?>">
+                                        <button type="submit" name="eliminar_trabajo_recurso"
+                                            style="background:#fee2e2;color:#dc2626;border:none;border-radius:5px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer">
+                                            🗑 Eliminar
+                                        </button>
+                                    </form>
+                                </td>
+                                <?php endif; ?>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    </div>
+                    <?php endif; ?>
+                </div>
+
+                <!-- Entregas de participantes -->
+                <?php if (($is_admin || $is_evaluador) && isset($puede_ver_entregas) && $puede_ver_entregas): ?>
+                <div class="card">
+                    <h3>📬 Entregas de participantes</h3>
+                    <p style="font-size:13px;color:#6b7280;margin:8px 0 20px">Evento: <strong><?= htmlspecialchars($admin_evento_nombre) ?></strong> — <?= count($trabajo_entregas) ?> entrega(s)</p>
+
+                    <?php if (empty($trabajo_entregas)): ?>
+                        <p style="color:#9ca3af;font-size:14px">No hay entregas registradas para este evento aún.</p>
+                    <?php else: ?>
+                    <div style="overflow-x:auto">
+                    <table style="width:100%;border-collapse:collapse;font-size:13px">
+                        <thead>
+                            <tr style="background:#f3f4f6;color:#374151;text-align:left">
+                                <th style="padding:10px 14px;border-bottom:1px solid #e5e7eb">Participante</th>
+                                <th style="padding:10px 14px;border-bottom:1px solid #e5e7eb">Documento</th>
+                                <th style="padding:10px 14px;border-bottom:1px solid #e5e7eb">Archivo</th>
+                                <th style="padding:10px 14px;border-bottom:1px solid #e5e7eb">Estado</th>
+                                <th style="padding:10px 14px;border-bottom:1px solid #e5e7eb">Calificación</th>
+                                <th style="padding:10px 14px;border-bottom:1px solid #e5e7eb;white-space:nowrap">Fecha entrega</th>
+                                <th style="padding:10px 14px;border-bottom:1px solid #e5e7eb">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($trabajo_entregas as $tent): ?>
+                            <?php
+                            $eid = (int) $tent['id'];
+                            switch ($tent['estado']) {
+                                case 'revisado':
+                                    $est_bg = '#dcfce7'; $est_color = '#166534'; $est_label = 'Revisado'; break;
+                                case 'requiere_ajustes':
+                                    $est_bg = '#ffedd5'; $est_color = '#9a3412'; $est_label = 'Requiere ajustes'; break;
+                                default:
+                                    $est_bg = '#f3f4f6'; $est_color = '#374151'; $est_label = 'Pendiente';
+                            }
+                            $nombre_desc = !empty($tent['nombre_original']) ? $tent['nombre_original'] : $tent['archivo'];
+                            ?>
+                            <tr style="border-bottom:1px solid #f3f4f6" id="fila-entrega-<?= $eid ?>">
+                                <td style="padding:10px 14px;font-weight:500"><?= htmlspecialchars($tent['participante_nombre']) ?></td>
+                                <td style="padding:10px 14px;color:#6b7280"><?= htmlspecialchars($tent['participante_documento']) ?></td>
+                                <td style="padding:10px 14px">
+                                    <?php if ($tent['archivo']): ?>
+                                    <a href="descargar_entrega.php?id=<?= $eid ?>" target="_blank"
+                                       style="color:#7b1a2e;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:4px">
+                                        ⬇ <span style="font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><?= htmlspecialchars($nombre_desc) ?></span>
+                                    </a>
+                                    <?php else: ?>
+                                        <span style="color:#9ca3af">Sin archivo</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td style="padding:10px 14px">
+                                    <span style="background:<?= $est_bg ?>;color:<?= $est_color ?>;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;white-space:nowrap"><?= $est_label ?></span>
+                                </td>
+                                <td style="padding:10px 14px;text-align:center">
+                                    <?= $tent['calificacion'] !== null ? htmlspecialchars($tent['calificacion']) : '<span style="color:#9ca3af">—</span>' ?>
+                                </td>
+                                <td style="padding:10px 14px;color:#6b7280;white-space:nowrap">
+                                    <?= $tent['fecha_entrega'] ? date('d/m/Y H:i', strtotime($tent['fecha_entrega'])) : '—' ?>
+                                </td>
+                                <td style="padding:10px 14px">
+                                    <button type="button"
+                                        onclick="abrirEvalModal(<?= $eid ?>,<?= htmlspecialchars(json_encode($tent['estado'])) ?>,<?= htmlspecialchars(json_encode($tent['calificacion'] ?? '')) ?>,<?= htmlspecialchars(json_encode($tent['comentarios_evaluador'] ?? '')) ?>)"
+                                        style="background:#7b1a2e;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">
+                                        ✏️ Evaluar
+                                    </button>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    </div>
+                    <?php endif; ?>
+                </div>
+                <?php elseif ($is_evaluador && isset($puede_ver_entregas) && !$puede_ver_entregas): ?>
+                <div class="card">
+                    <div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:7px;padding:14px 18px;color:#92400e;font-size:14px">
+                        ⚠️ No estás asignado al evento <strong><?= htmlspecialchars($admin_evento_nombre) ?></strong>. Contactá al administrador para que te asigne.
+                    </div>
+                </div>
+                <?php endif; ?>
+
+                <!-- Modal de evaluación -->
+                <div id="modal-eval" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;align-items:center;justify-content:center">
+                    <div style="background:#fff;border-radius:12px;padding:32px;width:100%;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,.3);position:relative">
+                        <button type="button" onclick="cerrarEvalModal()"
+                            style="position:absolute;top:14px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;color:#6b7280">✕</button>
+                        <h3 style="margin-bottom:20px;color:#1a1433">✏️ Evaluar entrega</h3>
+                        <form method="POST" id="form-eval">
+                            <input type="hidden" name="entrega_id" id="eval-entrega-id">
+                            <div style="margin-bottom:16px">
+                                <label style="display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:6px">Estado <span style="color:#dc2626">*</span></label>
+                                <select name="ev_estado" id="eval-estado"
+                                    style="width:100%;padding:10px 12px;border:1.5px solid #d1d5db;border-radius:7px;font-size:14px;background:#fff">
+                                    <option value="revisado">✅ Revisado</option>
+                                    <option value="requiere_ajustes">🔶 Requiere ajustes</option>
+                                </select>
+                            </div>
+                            <div style="margin-bottom:16px">
+                                <label style="display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:6px">Calificación (opcional)</label>
+                                <input type="number" name="ev_calificacion" id="eval-calificacion"
+                                    min="0" max="100" step="0.5" placeholder="Ej: 85"
+                                    style="width:100%;padding:10px 12px;border:1.5px solid #d1d5db;border-radius:7px;font-size:14px">
+                            </div>
+                            <div style="margin-bottom:22px">
+                                <label style="display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:6px">Comentarios (opcional)</label>
+                                <textarea name="ev_comentarios" id="eval-comentarios" rows="4"
+                                    placeholder="Observaciones para el participante…"
+                                    style="width:100%;padding:10px 12px;border:1.5px solid #d1d5db;border-radius:7px;font-size:14px;resize:vertical"></textarea>
+                            </div>
+                            <div style="display:flex;gap:12px">
+                                <button type="submit" name="evaluar_entrega"
+                                    style="flex:1;background:#7b1a2e;color:#fff;border:none;border-radius:7px;padding:11px;font-size:14px;font-weight:700;cursor:pointer">
+                                    💾 Guardar evaluación
+                                </button>
+                                <button type="button" onclick="cerrarEvalModal()"
+                                    style="background:#f3f4f6;color:#374151;border:none;border-radius:7px;padding:11px 20px;font-size:14px;font-weight:600;cursor:pointer">
+                                    Cancelar
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                <script>
+                function abrirEvalModal(id, estado, calificacion, comentarios) {
+                    document.getElementById('eval-entrega-id').value   = id;
+                    document.getElementById('eval-estado').value       = estado || 'revisado';
+                    document.getElementById('eval-calificacion').value = calificacion || '';
+                    document.getElementById('eval-comentarios').value  = comentarios || '';
+                    var m = document.getElementById('modal-eval');
+                    m.style.display = 'flex';
+                }
+                function cerrarEvalModal() {
+                    document.getElementById('modal-eval').style.display = 'none';
+                }
+                document.getElementById('modal-eval').addEventListener('click', function(e) {
+                    if (e.target === this) cerrarEvalModal();
+                });
+                </script>
+
+                <?php endif; // $is_admin || $is_evaluador ?>
+
+            <!-- ============ TAB PASSWORD ============ -->
             <?php elseif ($tab === 'password'): ?>
 
                 <div class="card" style="max-width:480px;">
@@ -2277,12 +3120,19 @@ if ($tab === 'password') {
                 document.getElementById(id).classList.remove('open');
             }
 
-            function abrirEditarEv(id, nombre, slug, activo) {
-                document.getElementById('edit-ev-id').value    = id;
-                document.getElementById('edit-ev-nombre').value = nombre;
-                document.getElementById('edit-ev-slug').value   = slug;
-                document.getElementById('edit-ev-activo').checked = activo == 1;
+            function abrirEditarEv(id, nombre, slug, activo, finalizado, mensaje) {
+                document.getElementById('edit-ev-id').value              = id;
+                document.getElementById('edit-ev-nombre').value          = nombre;
+                document.getElementById('edit-ev-slug').value            = slug;
+                document.getElementById('edit-ev-activo').checked        = activo == 1;
+                document.getElementById('edit-ev-finalizado').checked    = finalizado == 1;
+                document.getElementById('edit-ev-mensaje').value         = mensaje || '';
+                toggleMensajeFinalizado(finalizado == 1);
                 document.getElementById('modal-ev').classList.add('open');
+            }
+
+            function toggleMensajeFinalizado(show) {
+                document.getElementById('finalizado-msg-row').style.display = show ? 'flex' : 'none';
             }
 
             function autoSlug(valor) {

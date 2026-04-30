@@ -1,0 +1,11 @@
+# ================================================================
+#  Recursos base del trabajo integrador — recursosfyc
+#  Apache 2.4+
+#
+#  Deniega acceso HTTP directo a todos los archivos.
+#  Los recursos se sirven exclusivamente mediante portal.php
+#  (handler ?descargar=X&tipo=trabajo_recurso) que verifica
+#  sesión activa y que el recurso pertenece al evento del participante.
+# ================================================================
+
+Require all denied

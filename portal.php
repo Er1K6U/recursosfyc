@@ -14,6 +14,247 @@ function generarUUID(): string
     return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
 }
 
+function renderEventoFinalizado(array $evento): void
+{
+    $ev_nombre   = htmlspecialchars($evento['nombre'] ?? '');
+    $fin_mensaje = !empty($evento['mensaje_finalizado'])
+        ? htmlspecialchars($evento['mensaje_finalizado'])
+        : 'Gracias por participar. El evento ha finalizado, pero puedes seguir consultando tus recursos, videos y certificados disponibles.';
+
+    $fin_fecha = '';
+    if (!empty($evento['finalizado_en'])) {
+        $meses = ['enero','febrero','marzo','abril','mayo','junio',
+                  'julio','agosto','septiembre','octubre','noviembre','diciembre'];
+        $ts        = strtotime($evento['finalizado_en']);
+        $fin_fecha = (int) date('j', $ts) . ' de '
+                   . $meses[(int) date('n', $ts) - 1] . ' de '
+                   . date('Y', $ts);
+    }
+    ?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evento finalizado · F&amp;C Consultores</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1a1433 0%, #3b1fa8 55%, #685f2f 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px 16px;
+        }
+
+        .fin-wrap {
+            animation: cardIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+            width: 100%;
+            max-width: 600px;
+        }
+
+        @keyframes cardIn {
+            from { opacity: 0; transform: translateY(28px) scale(0.97); }
+            to   { opacity: 1; transform: translateY(0)    scale(1);    }
+        }
+
+        .fin-card {
+            background: #ffffff;
+            border-radius: 24px;
+            padding: 48px 40px 40px;
+            text-align: center;
+            box-shadow: 0 32px 80px rgba(0,0,0,0.30), 0 4px 20px rgba(148,41,52,0.20);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .fin-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 5px;
+            background: linear-gradient(90deg, #1a1433, #3b1fa8, #685f2f);
+        }
+
+        .fin-ovi {
+            width: 140px;
+            height: 140px;
+            margin: 0 auto 24px;
+            display: block;
+            animation: oviFloat 3.2s ease-in-out infinite;
+            filter: drop-shadow(0 8px 18px rgba(59,31,168,0.22));
+        }
+
+        @keyframes oviFloat {
+            0%, 100% { transform: translateY(0);    }
+            50%       { transform: translateY(-9px); }
+        }
+
+        .fin-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #fef3c7;
+            color: #92400e;
+            border: 1px solid #fbbf24;
+            border-radius: 99px;
+            padding: 5px 14px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+            margin-bottom: 22px;
+        }
+
+        .fin-title {
+            font-size: 28px;
+            font-weight: 700;
+            color: #1a1433;
+            line-height: 1.25;
+            margin-bottom: 10px;
+        }
+
+        .fin-evento {
+            font-size: 17px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 22px;
+        }
+
+        .fin-divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, #e5e7eb, transparent);
+            margin: 0 0 22px;
+        }
+
+        .fin-mensaje {
+            font-size: 15px;
+            color: #4b5563;
+            line-height: 1.75;
+            margin-bottom: 14px;
+        }
+
+        .fin-fecha {
+            font-size: 13px;
+            color: #9ca3af;
+            margin-bottom: 0;
+        }
+
+        .fin-fecha strong { color: #6b7280; }
+
+        .fin-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 34px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .fin-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 13px 26px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            font-family: inherit;
+            text-decoration: none;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.15s;
+        }
+
+        .fin-btn:hover  { opacity: 0.88; transform: translateY(-2px); }
+        .fin-btn:active { transform: translateY(0); }
+
+        .fin-btn-entrar {
+            background: #3b1fa8;
+            color: #ffffff;
+            box-shadow: 0 4px 14px rgba(59,31,168,0.35);
+        }
+
+        .fin-btn-cambiar {
+            background: #f3f4f6;
+            color: #374151;
+        }
+
+        .fin-link-salir {
+            display: block;
+            margin-top: 16px;
+            font-size: 13px;
+            color: #9ca3af;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .fin-link-salir:hover { color: #6b7280; }
+
+        @media (max-width: 480px) {
+            .fin-card  { padding: 36px 20px 32px; }
+            .fin-title { font-size: 23px; }
+            .fin-ovi   { width: 115px; height: 115px; }
+            .fin-btn   { padding: 12px 20px; font-size: 13px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="fin-wrap">
+        <div class="fin-card">
+
+            <img src="assets/ovi/ovi-alerta.svg" class="fin-ovi" alt="Ovi">
+
+            <div class="fin-badge">
+                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24"
+                     fill="none" stroke="currentColor" stroke-width="3"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                Evento finalizado
+            </div>
+
+            <h1 class="fin-title">¡Felicitaciones por completar este evento!</h1>
+            <p class="fin-evento"><?= $ev_nombre ?></p>
+
+            <div class="fin-divider"></div>
+
+            <p class="fin-mensaje"><?= $fin_mensaje ?></p>
+
+            <?php if ($fin_fecha): ?>
+            <p class="fin-fecha">Finalizado el: <strong><?= $fin_fecha ?></strong></p>
+            <?php endif; ?>
+
+            <div class="fin-actions">
+                <a href="portal.php?continuar_evento_finalizado=1" class="fin-btn fin-btn-entrar">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24"
+                         fill="none" stroke="currentColor" stroke-width="2.5"
+                         stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="9 18 15 12 9 6"/>
+                    </svg>
+                    Entrar al portal
+                </a>
+                <a href="portal.php?cambiar_evento=1" class="fin-btn fin-btn-cambiar">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24"
+                         fill="none" stroke="currentColor" stroke-width="2.5"
+                         stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="15 18 9 12 15 6"/>
+                    </svg>
+                    Cambiar evento
+                </a>
+            </div>
+            <a href="logout.php" class="fin-link-salir">Cerrar sesión</a>
+
+        </div>
+    </div>
+</body>
+</html>
+    <?php
+}
+
 if (!isset($_SESSION['participante_id']) || !isset($_SESSION['terminos_aceptados'])) {
     header('Location: index.php');
     exit;
@@ -70,16 +311,68 @@ $stmt_perm = $pdo->prepare(
 $stmt_perm->execute([$_SESSION['participante_id']]);
 $permisos_video = array_map('intval', array_column($stmt_perm->fetchAll(), 'recurso_id'));
 
-$stmt_ev = $pdo->prepare("SELECT titulo_login, banner, nombre FROM eventos WHERE id = ? LIMIT 1");
+$stmt_ev = $pdo->prepare("SELECT titulo_login, banner, nombre, finalizado, finalizado_en, mensaje_finalizado FROM eventos WHERE id = ? LIMIT 1");
 $stmt_ev->execute([$evento_id]);
 $ev_data = $stmt_ev->fetch();
 $banner = $ev_data['banner'] ?? '';
 $titulo = $ev_data['titulo_login'] ?: ($ev_data['nombre'] ?? 'Diplomado en Gestión Integral de Riesgos');
 
+// Marcar evento finalizado como visto y continuar al portal
+if (isset($_GET['continuar_evento_finalizado'])) {
+    if (!isset($_SESSION['evento_finalizado_visto'])) {
+        $_SESSION['evento_finalizado_visto'] = [];
+    }
+    $_SESSION['evento_finalizado_visto'][$evento_id] = true;
+    header('Location: portal.php');
+    exit;
+}
+
+// Guard: mostrar pantalla de felicitación una sola vez por sesión/evento
+if (!empty($ev_data) && (int) $ev_data['finalizado'] === 1) {
+    $ya_visto = isset($_SESSION['evento_finalizado_visto'][$evento_id]);
+    if (!$ya_visto) {
+        renderEventoFinalizado($ev_data);
+        exit;
+    }
+}
+
 // Obtener certificado del participante para este evento
 $stmt_cert = $pdo->prepare("SELECT * FROM certificados WHERE participante_id = ? AND evento_id = ?");
 $stmt_cert->execute([$_SESSION['participante_id'], $evento_id]);
 $certificados_participante = $stmt_cert->fetchAll();
+
+// Trabajo integrador: config, recursos base, entrega propia
+$trabajo_config        = null;
+$trabajo_recursos_base = [];
+$mi_entrega            = null;
+
+$stmt_tc = $pdo->prepare(
+    "SELECT * FROM trabajo_integrador_config WHERE evento_id = ? AND activo = 1 LIMIT 1"
+);
+$stmt_tc->execute([$evento_id]);
+$trabajo_config = $stmt_tc->fetch() ?: null;
+
+if ($trabajo_config) {
+    $stmt_trb = $pdo->prepare(
+        "SELECT * FROM trabajo_integrador_recursos
+         WHERE  config_id = ? AND activo = 1
+         ORDER  BY orden ASC, creado_en ASC"
+    );
+    $stmt_trb->execute([$trabajo_config['id']]);
+    $trabajo_recursos_base = $stmt_trb->fetchAll();
+
+    $stmt_me = $pdo->prepare(
+        "SELECT * FROM trabajo_integrador_entregas
+         WHERE  config_id = ? AND participante_id = ? LIMIT 1"
+    );
+    $stmt_me->execute([$trabajo_config['id'], $_SESSION['participante_id']]);
+    $mi_entrega = $stmt_me->fetch() ?: null;
+}
+
+// Flash messages para el portal (subida de entrega)
+$flash_portal_ok  = $_SESSION['flash_portal']['ok']  ?? '';
+$flash_portal_err = $_SESSION['flash_portal']['err'] ?? '';
+unset($_SESSION['flash_portal']);
 
 // Manejar descarga certificado
 if (isset($_GET['descargar_cert'])) {
@@ -306,6 +599,165 @@ if (isset($_GET['ver_video'])) {
         header('Location: video.php?token=' . urlencode($token));
         exit;
     }
+}
+
+// ── Descarga segura de recurso base del trabajo integrador ──────────────────
+if (isset($_GET['descargar_trabajo_recurso'])) {
+    $tr_id = (int) ($_GET['descargar_trabajo_recurso']);
+
+    if ($tr_id < 1 || !$trabajo_config) {
+        http_response_code(403); exit('Acceso denegado');
+    }
+
+    $stmt_dtr = $pdo->prepare(
+        "SELECT archivo, nombre FROM trabajo_integrador_recursos
+         WHERE  id = ? AND config_id = ? AND activo = 1 LIMIT 1"
+    );
+    $stmt_dtr->execute([$tr_id, $trabajo_config['id']]);
+    $rec_dl = $stmt_dtr->fetch();
+
+    if (!$rec_dl) { http_response_code(404); exit('Recurso no encontrado'); }
+
+    $nombre_archivo  = basename($rec_dl['archivo']);
+    $directorio_base = realpath(__DIR__ . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'trabajo');
+
+    if ($directorio_base === false) { http_response_code(500); exit('Error de configuración'); }
+
+    $directorio_base = rtrim($directorio_base, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+    $filepath        = $directorio_base . $nombre_archivo;
+
+    if (!file_exists($filepath)) { http_response_code(404); exit('Archivo no encontrado'); }
+
+    $filepath_real = realpath($filepath);
+    if ($filepath_real === false || strpos($filepath_real . DIRECTORY_SEPARATOR, $directorio_base) !== 0) {
+        http_response_code(403); exit('Ruta inválida');
+    }
+
+    $pdo->prepare(
+        "INSERT INTO accesos (participante_id, evento_id, accion, ip) VALUES (?, ?, 'descarga_trabajo_recurso', ?)"
+    )->execute([$_SESSION['participante_id'], $evento_id, $_SERVER['REMOTE_ADDR'] ?? '']);
+
+    $ext_dl   = strtolower(pathinfo($nombre_archivo, PATHINFO_EXTENSION));
+    $nom_dl   = $rec_dl['nombre'] . '.' . $ext_dl;
+    $ascii_dl = preg_replace('/[^\x20-\x7E]/', '_', str_replace(['"', '\\', '/'], '_', $nom_dl));
+    $utf8_dl  = rawurlencode($nom_dl);
+
+    if (ob_get_level()) ob_end_clean();
+    header('Content-Type: application/octet-stream');
+    header("Content-Disposition: attachment; filename=\"{$ascii_dl}\"; filename*=UTF-8''{$utf8_dl}");
+    header('Content-Length: ' . filesize($filepath_real));
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('X-Content-Type-Options: nosniff');
+    readfile($filepath_real);
+    exit;
+}
+
+// ── Subida de entrega del participante ───────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['subir_entrega'])) {
+
+    if (!$trabajo_config) {
+        $_SESSION['flash_portal']['err'] = 'El trabajo integrador no está disponible para este evento.';
+        header('Location: portal.php'); exit;
+    }
+
+    if ($mi_entrega) {
+        if ($mi_entrega['estado'] === 'aprobado') {
+            $_SESSION['flash_portal']['err'] = 'Tu entrega ya fue aprobada y no puede ser reemplazada.';
+            header('Location: portal.php'); exit;
+        }
+        if (!(int) $trabajo_config['permite_reentrega']) {
+            $_SESSION['flash_portal']['err'] = 'Ya realizaste tu entrega. Las reentregas no están habilitadas.';
+            header('Location: portal.php'); exit;
+        }
+    }
+
+    $allowed_ext  = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'zip', 'ppt', 'pptx'];
+    $allowed_mime = [
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/zip', 'application/x-zip-compressed',
+        'application/vnd.ms-powerpoint',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    ];
+
+    $file = $_FILES['entrega_archivo'] ?? null;
+    if (!$file || $file['error'] !== UPLOAD_ERR_OK) {
+        $_SESSION['flash_portal']['err'] = 'Error al recibir el archivo (código: ' . ($file['error'] ?? '?') . ').';
+        header('Location: portal.php'); exit;
+    }
+
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    if (!in_array($ext, $allowed_ext)) {
+        $_SESSION['flash_portal']['err'] = 'Extensión no permitida. Formatos aceptados: ' . implode(', ', $allowed_ext) . '.';
+        header('Location: portal.php'); exit;
+    }
+    if ($file['size'] > 25 * 1024 * 1024) {
+        $_SESSION['flash_portal']['err'] = 'El archivo supera el límite de 25 MB.';
+        header('Location: portal.php'); exit;
+    }
+
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mime  = finfo_file($finfo, $file['tmp_name']);
+    finfo_close($finfo);
+    if (!in_array($mime, $allowed_mime)) {
+        $_SESSION['flash_portal']['err'] = 'El tipo de archivo no es válido.';
+        header('Location: portal.php'); exit;
+    }
+
+    $doc      = preg_replace('/[^a-zA-Z0-9]/', '', $_SESSION['participante_documento'] ?? 'doc');
+    $filename = 'entrega_' . $evento_id . '_' . (int) $_SESSION['participante_id'] . '_' . $doc . '_' . time() . '.' . $ext;
+
+    if (!is_dir('private_entregas')) { mkdir('private_entregas', 0755, true); }
+
+    if (!move_uploaded_file($file['tmp_name'], 'private_entregas/' . $filename)) {
+        $_SESSION['flash_portal']['err'] = 'No se pudo guardar el archivo en el servidor.';
+        header('Location: portal.php'); exit;
+    }
+
+    // Eliminar archivo anterior al reemplazar
+    if ($mi_entrega && !empty($mi_entrega['archivo'])) {
+        $old = 'private_entregas/' . basename($mi_entrega['archivo']);
+        if (file_exists($old)) { @unlink($old); }
+    }
+
+    $es_tardia       = ($trabajo_config['fecha_limite'] && strtotime($trabajo_config['fecha_limite']) < time()) ? 1 : 0;
+    $nombre_original = basename($file['name']);
+    $pid             = (int) $_SESSION['participante_id'];
+
+    if ($mi_entrega) {
+        $pdo->prepare(
+            "UPDATE trabajo_integrador_entregas
+             SET    archivo               = ?,
+                    nombre_original       = ?,
+                    estado                = 'entregado',
+                    entrega_tardia        = ?,
+                    fecha_entrega         = NOW(),
+                    calificacion          = NULL,
+                    comentarios_evaluador = NULL,
+                    evaluador_id          = NULL,
+                    fecha_evaluacion      = NULL
+             WHERE  id = ?"
+        )->execute([$filename, $nombre_original, $es_tardia, $mi_entrega['id']]);
+    } else {
+        $pdo->prepare(
+            "INSERT INTO trabajo_integrador_entregas
+                 (config_id, evento_id, participante_id, persona_id,
+                  archivo, nombre_original, estado, entrega_tardia, fecha_entrega)
+             VALUES (?, ?, ?, ?, ?, ?, 'entregado', ?, NOW())"
+        )->execute([
+            $trabajo_config['id'], $evento_id, $pid, $pid,
+            $filename, $nombre_original, $es_tardia,
+        ]);
+    }
+
+    $_SESSION['flash_portal']['ok'] = $es_tardia
+        ? 'Entrega subida correctamente (fuera de plazo).'
+        : '¡Entrega subida correctamente!';
+    header('Location: portal.php');
+    exit;
 }
 ?>
 <!DOCTYPE html>
@@ -931,6 +1383,214 @@ if (isset($_GET['ver_video'])) {
                 <?php endforeach; ?>
             </div>
         <?php endif; ?>
+
+        <?php if ($flash_portal_ok): ?>
+            <div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:14px 18px;color:#166534;font-size:14px;font-weight:600;margin-bottom:24px">
+                ✅ <?= htmlspecialchars($flash_portal_ok) ?>
+            </div>
+        <?php endif; ?>
+        <?php if ($flash_portal_err): ?>
+            <div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:14px 18px;color:#991b1b;font-size:14px;font-weight:600;margin-bottom:24px">
+                ⚠️ <?= htmlspecialchars($flash_portal_err) ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($trabajo_config): ?>
+        <?php
+        // Calcular estado de entrega y permisos de subida
+        $puede_subir   = true;
+        $bloqueo_razon = '';
+        if ($mi_entrega) {
+            if ($mi_entrega['estado'] === 'aprobado') {
+                $puede_subir   = false;
+                $bloqueo_razon = 'aprobado';
+            } elseif (!(int) $trabajo_config['permite_reentrega']) {
+                $puede_subir   = false;
+                $bloqueo_razon = 'sin_reentrega';
+            }
+        }
+        $es_fuera_plazo = $trabajo_config['fecha_limite'] && strtotime($trabajo_config['fecha_limite']) < time();
+        ?>
+
+        <div class="section-header" style="margin-top:8px">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="16" y1="13" x2="8" y2="13"/>
+                <line x1="16" y1="17" x2="8" y2="17"/>
+                <polyline points="10 9 9 9 8 9"/>
+            </svg>
+            Trabajo integrador final
+        </div>
+
+        <div style="background:white;border-radius:16px;padding:28px;box-shadow:0 1px 8px rgba(0,0,0,.06),0 0 0 1px rgba(124,58,237,.06);margin-bottom:28px">
+
+            <!-- Título y descripción -->
+            <div style="margin-bottom:20px">
+                <h3 style="font-size:17px;font-weight:700;color:#111827;margin-bottom:8px"><?= htmlspecialchars($trabajo_config['titulo']) ?></h3>
+                <?php if ($trabajo_config['descripcion']): ?>
+                <p style="font-size:14px;color:#374151;line-height:1.7;white-space:pre-wrap"><?= htmlspecialchars($trabajo_config['descripcion']) ?></p>
+                <?php endif; ?>
+            </div>
+
+            <!-- Fecha límite + calificación máxima -->
+            <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+                <?php if ($trabajo_config['fecha_limite']): ?>
+                <span style="display:inline-flex;align-items:center;gap:6px;background:<?= $es_fuera_plazo ? '#fef2f2' : '#f5f3ff' ?>;color:<?= $es_fuera_plazo ? '#991b1b' : '#5b21b6' ?>;padding:6px 14px;border-radius:99px;font-size:12px;font-weight:600;border:1px solid <?= $es_fuera_plazo ? '#fca5a5' : '#ede9fe' ?>">
+                    <?= $es_fuera_plazo ? '⏰' : '📅' ?>
+                    Fecha límite: <?= date('d/m/Y H:i', strtotime($trabajo_config['fecha_limite'])) ?>
+                    <?= $es_fuera_plazo ? '— Plazo vencido' : '' ?>
+                </span>
+                <?php endif; ?>
+                <span style="display:inline-flex;align-items:center;gap:6px;background:#f0fdf4;color:#166534;padding:6px 14px;border-radius:99px;font-size:12px;font-weight:600;border:1px solid #86efac">
+                    🏆 Calificación máxima: <?= htmlspecialchars($trabajo_config['calificacion_maxima']) ?> puntos
+                </span>
+            </div>
+
+            <!-- Recursos base -->
+            <?php if (!empty($trabajo_recursos_base)): ?>
+            <div style="margin-bottom:24px;padding-bottom:24px;border-bottom:1px solid #f3f4f6">
+                <p style="font-size:12px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">📎 Materiales de referencia</p>
+                <div style="display:flex;flex-direction:column;gap:10px">
+                <?php foreach ($trabajo_recursos_base as $trb):
+                    $trb_ext = strtoupper($trb['tipo'] ?? pathinfo($trb['archivo'], PATHINFO_EXTENSION));
+                    $trb_sz  = (int) ($trb['tamanio'] ?? 0);
+                    $trb_sz_str = $trb_sz > 1048576 ? round($trb_sz/1048576,1).' MB' : round($trb_sz/1024,0).' KB';
+                ?>
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:12px 16px">
+                        <div style="min-width:0">
+                            <span style="font-size:14px;font-weight:600;color:#111827;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><?= htmlspecialchars($trb['nombre']) ?></span>
+                            <?php if ($trb['descripcion']): ?>
+                            <span style="font-size:12px;color:#6b7280"><?= htmlspecialchars($trb['descripcion']) ?></span>
+                            <?php endif; ?>
+                            <span style="font-size:11px;color:#9ca3af"><?= $trb_ext ?> · <?= $trb_sz ? $trb_sz_str : '' ?></span>
+                        </div>
+                        <a href="portal.php?descargar_trabajo_recurso=<?= (int) $trb['id'] ?>"
+                           style="flex-shrink:0;display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#1a1433,#6d28d9);color:#fff;text-decoration:none;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;white-space:nowrap;box-shadow:0 2px 8px rgba(109,40,217,.3)">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                            Descargar
+                        </a>
+                    </div>
+                <?php endforeach; ?>
+                </div>
+            </div>
+            <?php endif; ?>
+
+            <!-- Estado de mi entrega -->
+            <?php if ($mi_entrega): ?>
+            <?php
+            switch ($mi_entrega['estado']) {
+                case 'aprobado':
+                    $ent_bg = '#dcfce7'; $ent_cl = '#166534'; $ent_label = '✅ Aprobado'; break;
+                case 'requiere_ajustes':
+                    $ent_bg = '#ffedd5'; $ent_cl = '#9a3412'; $ent_label = '🔶 Requiere ajustes'; break;
+                case 'en_revision':
+                    $ent_bg = '#e0f2fe'; $ent_cl = '#0369a1'; $ent_label = '🔍 En revisión'; break;
+                case 'no_aprobado':
+                    $ent_bg = '#fef2f2'; $ent_cl = '#991b1b'; $ent_label = '❌ No aprobado'; break;
+                default:
+                    $ent_bg = '#f3f4f6'; $ent_cl = '#374151'; $ent_label = '📤 Entregado';
+            }
+            $nom_ent = $mi_entrega['nombre_original'] ?: $mi_entrega['archivo'];
+            ?>
+            <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:18px 20px;margin-bottom:20px">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+                    <span style="font-size:12px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.5px">Mi entrega</span>
+                    <span style="background:<?= $ent_bg ?>;color:<?= $ent_cl ?>;padding:4px 12px;border-radius:99px;font-size:12px;font-weight:700"><?= $ent_label ?></span>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+                    <div>
+                        <span style="font-size:13px;color:#374151;font-weight:500"><?= htmlspecialchars($nom_ent) ?></span>
+                        <?php if ($mi_entrega['entrega_tardia']): ?>
+                        <span style="margin-left:8px;font-size:11px;background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:99px;font-weight:600">Fuera de plazo</span>
+                        <?php endif; ?>
+                        <br>
+                        <span style="font-size:12px;color:#9ca3af">
+                            Enviado: <?= date('d/m/Y H:i', strtotime($mi_entrega['fecha_entrega'])) ?>
+                            <?php if ($mi_entrega['fecha_evaluacion']): ?>
+                            &nbsp;·&nbsp; Evaluado: <?= date('d/m/Y H:i', strtotime($mi_entrega['fecha_evaluacion'])) ?>
+                            <?php endif; ?>
+                        </span>
+                    </div>
+                    <?php if ($mi_entrega['archivo']): ?>
+                    <a href="descargar_entrega.php?id=<?= (int) $mi_entrega['id'] ?>"
+                       style="display:inline-flex;align-items:center;gap:6px;background:#f0f4ff;color:#3730a3;border:1px solid #c7d2fe;text-decoration:none;padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        Ver mi entrega
+                    </a>
+                    <?php endif; ?>
+                </div>
+                <?php if ($mi_entrega['calificacion'] !== null): ?>
+                <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e5e7eb">
+                    <span style="font-size:13px;color:#374151;font-weight:600">Calificación: </span>
+                    <span style="font-size:20px;font-weight:800;color:#1a1433"><?= htmlspecialchars($mi_entrega['calificacion']) ?></span>
+                    <span style="font-size:13px;color:#6b7280"> / <?= htmlspecialchars($trabajo_config['calificacion_maxima']) ?></span>
+                </div>
+                <?php endif; ?>
+                <?php if ($mi_entrega['comentarios_evaluador']): ?>
+                <div style="margin-top:12px;padding:12px 16px;background:white;border-radius:8px;border-left:3px solid #6d28d9">
+                    <p style="font-size:12px;font-weight:700;color:#6b7280;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">Comentarios del evaluador</p>
+                    <p style="font-size:14px;color:#374151;line-height:1.6;white-space:pre-wrap"><?= htmlspecialchars($mi_entrega['comentarios_evaluador']) ?></p>
+                </div>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
+
+            <!-- Formulario de subida -->
+            <?php if ($puede_subir): ?>
+            <?php if ($es_fuera_plazo && !$mi_entrega): ?>
+            <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;font-size:13px;color:#92400e;margin-bottom:16px">
+                ⏰ El plazo de entrega venció, pero aún puedes subir tu trabajo. Quedará marcado como <strong>entrega fuera de plazo</strong>.
+            </div>
+            <?php elseif ($es_fuera_plazo && $mi_entrega): ?>
+            <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;font-size:13px;color:#92400e;margin-bottom:16px">
+                ⏰ El plazo venció. Si reemplazas tu entrega, quedará marcada como <strong>fuera de plazo</strong>.
+            </div>
+            <?php endif; ?>
+
+            <form method="POST" enctype="multipart/form-data">
+                <div style="border:2px dashed #c4b5fd;border-radius:12px;padding:24px;text-align:center;background:#faf5ff;margin-bottom:4px">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none"
+                        stroke="#7c3aed" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
+                        style="display:block;margin:0 auto 10px">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    <p style="font-size:14px;font-weight:600;color:#1a1433;margin-bottom:6px"><?= $mi_entrega ? 'Reemplazar entrega' : 'Subir mi entrega' ?></p>
+                    <p style="font-size:12px;color:#6b7280;margin-bottom:14px">PDF, Word, Excel, PowerPoint, ZIP · Máx. 25 MB</p>
+                    <input type="file" name="entrega_archivo" id="entrega_archivo" required
+                        accept=".pdf,.doc,.docx,.xls,.xlsx,.zip,.ppt,.pptx"
+                        style="display:none"
+                        onchange="document.getElementById('nombre-archivo-sel').textContent = this.files[0]?.name || ''">
+                    <label for="entrega_archivo"
+                        style="display:inline-flex;align-items:center;gap:8px;background:#f5f3ff;color:#6d28d9;border:1.5px solid #c4b5fd;padding:9px 20px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">
+                        📂 Seleccionar archivo
+                    </label>
+                    <p id="nombre-archivo-sel" style="font-size:12px;color:#7c3aed;margin-top:10px;min-height:16px;font-weight:500"></p>
+                </div>
+                <button type="submit" name="subir_entrega"
+                    style="width:100%;margin-top:14px;background:linear-gradient(135deg,#1a1433,#6d28d9);color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;box-shadow:0 3px 12px rgba(109,40,217,.35);font-family:inherit">
+                    <?= $mi_entrega ? '🔄 Reemplazar entrega' : '📤 Enviar entrega' ?>
+                </button>
+            </form>
+            <?php elseif ($bloqueo_razon === 'aprobado'): ?>
+            <div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:14px 18px;color:#166534;font-size:14px;font-weight:600;text-align:center">
+                ✅ Tu trabajo fue aprobado. No se permiten nuevas entregas.
+            </div>
+            <?php else: ?>
+            <div style="background:#f3f4f6;border-radius:10px;padding:14px 18px;color:#6b7280;font-size:14px;text-align:center">
+                🔒 Las reentregas no están habilitadas para este trabajo.
+            </div>
+            <?php endif; ?>
+
+        </div>
+        <?php endif; // $trabajo_config ?>
+
     </div>
 
     <div class="footer">© F&C Consultores · Todos los derechos reservados · Uso exclusivo participantes del Diplomado
