@@ -181,6 +181,44 @@ function av_mmss(int $s): string {
     return sprintf('%d:%02d', intdiv($s, 60), $s % 60);
 }
 
+/**
+ * Valida un archivo subido y genera un nombre seguro y único.
+ *
+ * @param array  $file         Entrada de $_FILES
+ * @param array  $allowed_ext  Extensiones permitidas en minúsculas
+ * @param array  $allowed_mime MIME types permitidos (finfo_file)
+ * @param int    $max_bytes    Tamaño máximo en bytes
+ * @param string $prefix       Prefijo del nombre de archivo resultante
+ * @param int    $evento_id    ID del evento activo (incluido en el nombre)
+ * @return array ['ok'=>true,'filename'=>string,'ext'=>string,'mime'=>string]
+ *            o  ['ok'=>false,'error'=>string]
+ */
+function upload_validar(array $file, array $allowed_ext, array $allowed_mime, int $max_bytes, string $prefix, int $evento_id): array
+{
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        return ['ok' => false, 'error' => 'Error al recibir el archivo (código: ' . $file['error'] . ').'];
+    }
+    if ($file['size'] > $max_bytes) {
+        return ['ok' => false, 'error' => 'El archivo supera el límite de ' . round($max_bytes / 1048576) . ' MB.'];
+    }
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    if (!in_array($ext, $allowed_ext, true)) {
+        return ['ok' => false, 'error' => 'Extensión no permitida. Formatos aceptados: ' . implode(', ', $allowed_ext) . '.'];
+    }
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mime  = finfo_file($finfo, $file['tmp_name']);
+    finfo_close($finfo);
+    if (!in_array($mime, $allowed_mime, true)) {
+        return ['ok' => false, 'error' => 'Tipo de contenido no válido. El archivo no corresponde a la extensión indicada.'];
+    }
+    // Nombre seguro: solo alfanumérico + guiones, máx. 60 chars, + token de 8 hex para colisión cero
+    $base  = preg_replace('/[^a-zA-Z0-9_\-]/', '_', pathinfo($file['name'], PATHINFO_FILENAME));
+    $base  = substr(trim($base, '_'), 0, 60) ?: 'archivo';
+    $token = substr(bin2hex(random_bytes(4)), 0, 8);
+    $filename = $prefix . '_' . $evento_id . '_' . date('Ymd_His') . '_' . $token . '_' . $base . '.' . $ext;
+    return ['ok' => true, 'filename' => $filename, 'ext' => $ext, 'mime' => $mime];
+}
+
 if (!empty($_SESSION['flash']['ok']))  { $mensaje   = $_SESSION['flash']['ok'];  unset($_SESSION['flash']['ok']);  }
 if (!empty($_SESSION['flash']['err'])) { $error_msg = $_SESSION['flash']['err']; unset($_SESSION['flash']['err']); }
 
@@ -287,19 +325,43 @@ if ($tab === 'certificados') {
 
     // Agregar certificado
     if (isset($_POST['agregar_certificado'])) {
-        $participante_id = (int) $_POST['participante_id'];
-        $nombre = trim($_POST['nombre_certificado']);
-        if ($participante_id && $nombre && isset($_FILES['archivo_certificado']) && $_FILES['archivo_certificado']['error'] === 0) {
-            $nombre_archivo = 'cert_' . time() . '_' . basename($_FILES['archivo_certificado']['name']);
-            $destino = 'uploads/' . $nombre_archivo;
-            if (move_uploaded_file($_FILES['archivo_certificado']['tmp_name'], $destino)) {
-                $stmt = $pdo->prepare("INSERT INTO certificados (evento_id, participante_id, nombre, archivo) VALUES (?, ?, ?, ?)");
-                $stmt->execute([$admin_evento_id, $participante_id, $nombre, $nombre_archivo]);
-                $_SESSION['flash']['ok'] = 'Certificado agregado correctamente.';
-                header('Location: admin.php?tab=certificados');
-                exit;
-            }
+        $participante_id = (int) ($_POST['participante_id'] ?? 0);
+        $nombre          = trim($_POST['nombre_certificado'] ?? '');
+        $file_cert       = $_FILES['archivo_certificado'] ?? null;
+
+        if (!$participante_id || !$nombre) {
+            $_SESSION['flash']['err'] = 'Participante y nombre del certificado son obligatorios.';
+            header('Location: admin.php?tab=certificados'); exit;
         }
+        if (!$file_cert || $file_cert['error'] !== UPLOAD_ERR_OK) {
+            $_SESSION['flash']['err'] = 'No se recibió el archivo (código: ' . ($file_cert['error'] ?? '?') . ').';
+            header('Location: admin.php?tab=certificados'); exit;
+        }
+
+        $res = upload_validar(
+            $file_cert,
+            ['pdf'],
+            ['application/pdf'],
+            25 * 1024 * 1024,
+            'cert',
+            $admin_evento_id
+        );
+        if (!$res['ok']) {
+            $_SESSION['flash']['err'] = $res['error'];
+            header('Location: admin.php?tab=certificados'); exit;
+        }
+
+        $destino = 'uploads/' . $res['filename'];
+        if (!move_uploaded_file($file_cert['tmp_name'], $destino)) {
+            $_SESSION['flash']['err'] = 'No se pudo guardar el archivo en el servidor.';
+            header('Location: admin.php?tab=certificados'); exit;
+        }
+
+        $pdo->prepare("INSERT INTO certificados (evento_id, participante_id, nombre, archivo) VALUES (?, ?, ?, ?)")
+            ->execute([$admin_evento_id, $participante_id, $nombre, $res['filename']]);
+        $_SESSION['flash']['ok'] = 'Certificado agregado correctamente.';
+        header('Location: admin.php?tab=certificados');
+        exit;
     }
 
     // Eliminar certificado
@@ -499,16 +561,38 @@ if ($tab === 'recursos') {
 
                 // Recurso con archivo
             } elseif (isset($_FILES['archivo_recurso']) && $_FILES['archivo_recurso']['error'] === 0) {
-                $nombre_archivo = time() . '_' . basename($_FILES['archivo_recurso']['name']);
-                $destino = 'uploads/' . $nombre_archivo;
-                if (move_uploaded_file($_FILES['archivo_recurso']['tmp_name'], $destino)) {
-                    $ext = strtolower(pathinfo($nombre_archivo, PATHINFO_EXTENSION));
-                    $stmt = $pdo->prepare("INSERT INTO recursos (evento_id, nombre, descripcion, archivo, tipo, url_externa) VALUES (?, ?, ?, ?, ?, NULL)");
-                    $stmt->execute([$admin_evento_id, $nom, $desc, $nombre_archivo, $ext]);
-                    $_SESSION['flash']['ok'] = 'Recurso agregado correctamente.';
-                    header('Location: admin.php?tab=recursos');
-                    exit;
+                $res_rec = upload_validar(
+                    $_FILES['archivo_recurso'],
+                    ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip', 'jpg', 'jpeg', 'png', 'webp'],
+                    [
+                        'application/pdf',
+                        'application/msword',
+                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        'application/vnd.ms-excel',
+                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        'application/vnd.ms-powerpoint',
+                        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                        'application/zip', 'application/x-zip-compressed',
+                        'image/jpeg', 'image/png', 'image/webp',
+                    ],
+                    25 * 1024 * 1024,
+                    'recurso',
+                    $admin_evento_id
+                );
+                if (!$res_rec['ok']) {
+                    $_SESSION['flash']['err'] = $res_rec['error'];
+                    header('Location: admin.php?tab=recursos'); exit;
                 }
+                $destino = 'uploads/' . $res_rec['filename'];
+                if (!move_uploaded_file($_FILES['archivo_recurso']['tmp_name'], $destino)) {
+                    $_SESSION['flash']['err'] = 'No se pudo guardar el archivo en el servidor.';
+                    header('Location: admin.php?tab=recursos'); exit;
+                }
+                $pdo->prepare("INSERT INTO recursos (evento_id, nombre, descripcion, archivo, tipo, url_externa) VALUES (?, ?, ?, ?, ?, NULL)")
+                    ->execute([$admin_evento_id, $nom, $desc, $res_rec['filename'], $res_rec['ext']]);
+                $_SESSION['flash']['ok'] = 'Recurso agregado correctamente.';
+                header('Location: admin.php?tab=recursos');
+                exit;
             } else {
                 $_SESSION['flash']['err'] = 'Debes subir un archivo o ingresar una URL externa.';
                 header('Location: admin.php?tab=recursos');
@@ -547,16 +631,25 @@ if ($tab === 'recursos') {
             $_SESSION['flash']['ok'] = 'Video externo agregado correctamente.';
         } elseif (isset($_FILES['video_archivo']) && $_FILES['video_archivo']['error'] === 0) {
             // ── Opción 2: Subida desde navegador ─────────────────────────────
-            $ext_permitidas = ['mp4', 'webm', 'ogg', 'mov', 'avi', 'mkv', 'm4v'];
-            $nombre_archivo = time() . '_' . basename($_FILES['video_archivo']['name']);
-            $ext            = strtolower(pathinfo($nombre_archivo, PATHINFO_EXTENSION));
-            if (!in_array($ext, $ext_permitidas)) {
-                $_SESSION['flash']['err'] = 'Tipo de archivo no permitido. Use: ' . implode(', ', $ext_permitidas);
+            $res_vid = upload_validar(
+                $_FILES['video_archivo'],
+                ['mp4', 'webm', 'ogg', 'mov', 'avi', 'mkv', 'm4v'],
+                [
+                    'video/mp4', 'video/webm', 'video/ogg',
+                    'video/quicktime', 'video/x-msvideo',
+                    'video/x-matroska', 'video/x-m4v',
+                ],
+                500 * 1024 * 1024,
+                'vid',
+                $admin_evento_id
+            );
+            if (!$res_vid['ok']) {
+                $_SESSION['flash']['err'] = $res_vid['error'];
             } else {
-                $destino = 'private_videos/' . $nombre_archivo;
+                $destino = 'private_videos/' . $res_vid['filename'];
                 if (move_uploaded_file($_FILES['video_archivo']['tmp_name'], $destino)) {
                     $stmt = $pdo->prepare("INSERT INTO recursos (evento_id, nombre, descripcion, archivo, tipo, es_video, ruta_video, video_expira_horas) VALUES (?, ?, ?, ?, ?, 1, ?, ?)");
-                    $stmt->execute([$admin_evento_id, $nom, $desc, $nombre_archivo, $ext, $nombre_archivo, $horas]);
+                    $stmt->execute([$admin_evento_id, $nom, $desc, $res_vid['filename'], $res_vid['ext'], $res_vid['filename'], $horas]);
                     $nuevo_id = (int) $pdo->lastInsertId();
                     if ($nuevo_id && $seleccionados) {
                         $ins_perm = $pdo->prepare("INSERT IGNORE INTO recurso_permisos_video (recurso_id, participante_id) VALUES (?, ?)");
@@ -704,14 +797,28 @@ if ($tab === 'configuracion') {
         $titulo_login = trim($_POST['titulo_evento']);
 
         if (isset($_FILES['banner']) && $_FILES['banner']['error'] === 0) {
-            $nombre_banner = 'banner_' . time() . '_' . basename($_FILES['banner']['name']);
-            $destino = 'uploads/' . $nombre_banner;
-            if (move_uploaded_file($_FILES['banner']['tmp_name'], $destino)) {
-                $pdo->prepare("UPDATE eventos SET titulo_login = ?, banner = ? WHERE id = ?")
-                    ->execute([$titulo_login, $nombre_banner, $admin_evento_id]);
-            } else {
+            $res_ban = upload_validar(
+                $_FILES['banner'],
+                ['jpg', 'jpeg', 'png', 'webp'],
+                ['image/jpeg', 'image/png', 'image/webp'],
+                10 * 1024 * 1024,
+                'banner',
+                $admin_evento_id
+            );
+            if (!$res_ban['ok']) {
+                $_SESSION['flash']['err'] = $res_ban['error'];
                 $pdo->prepare("UPDATE eventos SET titulo_login = ? WHERE id = ?")
                     ->execute([$titulo_login, $admin_evento_id]);
+            } else {
+                $destino = 'uploads/' . $res_ban['filename'];
+                if (move_uploaded_file($_FILES['banner']['tmp_name'], $destino)) {
+                    $pdo->prepare("UPDATE eventos SET titulo_login = ?, banner = ? WHERE id = ?")
+                        ->execute([$titulo_login, $res_ban['filename'], $admin_evento_id]);
+                } else {
+                    $_SESSION['flash']['err'] = 'Error al guardar el banner en el servidor.';
+                    $pdo->prepare("UPDATE eventos SET titulo_login = ? WHERE id = ?")
+                        ->execute([$titulo_login, $admin_evento_id]);
+                }
             }
         } else {
             $pdo->prepare("UPDATE eventos SET titulo_login = ? WHERE id = ?")
