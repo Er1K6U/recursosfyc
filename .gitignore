@@ -18,6 +18,9 @@ private_videos/*.m4v
 # ── Librería de tercero incluida manualmente ─────────────────────────────────
 libs/
 
+# ── Dependencias Composer (generadas, no se suben al repo) ──────────────────
+vendor/
+
 # ── Dumps / exportaciones de base de datos ──────────────────────────────────
 *.sql
 *.zip

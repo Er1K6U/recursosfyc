@@ -1,0 +1,10 @@
+{
+    "name": "fyc/recursosfyc",
+    "description": "Portal de recursos F&C Consultores",
+    "require": {
+        "phpoffice/phpspreadsheet": "^2.0"
+    },
+    "config": {
+        "optimize-autoloader": true
+    }
+}

@@ -717,6 +717,20 @@ if ($tab === 'analytics_videos') {
     $av_stmt = $pdo->prepare($av_sql);
     $av_stmt->execute($av_params);
     $av_rows = $av_stmt->fetchAll();
+
+    // Aggregate metrics (always scoped to current event, ignoring row-level filters)
+    $av_metrics_stmt = $pdo->prepare("
+        SELECT
+            COUNT(*)                              AS total_visualizaciones,
+            COUNT(DISTINCT vv.participante_id)    AS total_participantes,
+            SUM(vv.completed = 1)                 AS total_completados,
+            ROUND(AVG(vv.percent_watched) * 100, 1) AS promedio_porcentaje
+        FROM video_visualizaciones vv
+        JOIN recursos r ON r.id = vv.recurso_id
+        WHERE r.evento_id = ?
+    ");
+    $av_metrics_stmt->execute([$admin_evento_id]);
+    $av_metrics = $av_metrics_stmt->fetch();
 }
 
 // ===================== CAMBIAR PASSWORD =====================
@@ -1913,6 +1927,34 @@ if ($tab === 'password') {
                 <div class="card">
                     <h3>📊 Analytics de visualización de videos</h3>
 
+                    <!-- Metric cards -->
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:22px;">
+                        <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:16px 18px;text-align:center;">
+                            <div style="font-size:26px;font-weight:700;color:#6d28d9;">
+                                <?= number_format((int)($av_metrics['total_participantes'] ?? 0)) ?>
+                            </div>
+                            <div style="font-size:12px;color:#6b7280;margin-top:4px;">👥 Participantes únicos</div>
+                        </div>
+                        <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:16px 18px;text-align:center;">
+                            <div style="font-size:26px;font-weight:700;color:#6d28d9;">
+                                <?= number_format((int)($av_metrics['total_visualizaciones'] ?? 0)) ?>
+                            </div>
+                            <div style="font-size:12px;color:#6b7280;margin-top:4px;">🎥 Total visualizaciones</div>
+                        </div>
+                        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 18px;text-align:center;">
+                            <div style="font-size:26px;font-weight:700;color:#16a34a;">
+                                <?= number_format((int)($av_metrics['total_completados'] ?? 0)) ?>
+                            </div>
+                            <div style="font-size:12px;color:#6b7280;margin-top:4px;">✅ Completados</div>
+                        </div>
+                        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:16px 18px;text-align:center;">
+                            <div style="font-size:26px;font-weight:700;color:#ea580c;">
+                                <?= number_format((float)($av_metrics['promedio_porcentaje'] ?? 0), 1) ?>%
+                            </div>
+                            <div style="font-size:12px;color:#6b7280;margin-top:4px;">📊 Promedio visto</div>
+                        </div>
+                    </div>
+
                     <form method="GET" action="admin.php" style="margin-bottom:18px;">
                         <input type="hidden" name="tab" value="analytics_videos">
                         <div class="form-row" style="align-items:flex-end;flex-wrap:wrap;">
@@ -1952,6 +1994,14 @@ if ($tab === 'password') {
                             <div class="field" style="max-width:120px;">
                                 <label>&nbsp;</label>
                                 <button type="submit" class="btn btn-primary" style="width:100%;">Filtrar</button>
+                            </div>
+                            <div class="field" style="max-width:140px;">
+                                <label>&nbsp;</label>
+                                <a href="export_analytics_excel.php?f_recurso=<?= $av_f_recurso ?>&amp;f_participante=<?= $av_f_participante ?>&amp;f_estado=<?= urlencode($av_f_estado) ?>"
+                                   class="btn btn-primary"
+                                   style="width:100%;display:inline-block;text-align:center;text-decoration:none;box-sizing:border-box;">
+                                    📥 Exportar Excel
+                                </a>
                             </div>
                             <?php if ($av_f_recurso || $av_f_participante || $av_f_estado !== ''): ?>
                             <div class="field" style="max-width:120px;">
