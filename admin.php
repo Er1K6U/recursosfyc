@@ -346,13 +346,39 @@ if ($tab === 'participantes') {
         $doc = trim($_POST['documento']);
         $nom = trim($_POST['nombre']);
         if ($doc && $nom) {
-            try {
-                $stmt = $pdo->prepare("INSERT INTO participantes (documento, nombre) VALUES (?, ?)");
-                $stmt->execute([$doc, $nom]);
-                $_SESSION['flash']['ok'] = 'Participante agregado correctamente.';
-            } catch (PDOException $e) {
-                $_SESSION['flash']['err'] = 'Error: El documento ya existe.';
+            // ¿Ya existe este documento en participantes?
+            $stmt_chk = $pdo->prepare("SELECT id FROM participantes WHERE documento = ? LIMIT 1");
+            $stmt_chk->execute([$doc]);
+            $row_exist = $stmt_chk->fetch();
+
+            if (!$row_exist) {
+                // CASO A — nuevo participante: crear en participantes + personas + evento_participantes
+                $pdo->prepare("INSERT INTO participantes (documento, nombre) VALUES (?, ?)")
+                    ->execute([$doc, $nom]);
+                $new_id = (int) $pdo->lastInsertId();
+                // Mantener personas sincronizado (IDs iguales a participantes por migración 004)
+                $pdo->prepare("INSERT IGNORE INTO personas (id, documento, nombre) VALUES (?, ?, ?)")
+                    ->execute([$new_id, $doc, $nom]);
+                $pdo->prepare("INSERT IGNORE INTO evento_participantes (evento_id, persona_id, activo) VALUES (?, ?, 1)")
+                    ->execute([$admin_evento_id, $new_id]);
+                $_SESSION['flash']['ok'] = 'Participante creado y asociado al evento correctamente.';
+            } else {
+                // CASO B — documento existe: asociar al evento activo si aún no lo está
+                $persona_id = (int) $row_exist['id'];
+                $stmt_ep = $pdo->prepare(
+                    "SELECT id FROM evento_participantes WHERE persona_id = ? AND evento_id = ? LIMIT 1"
+                );
+                $stmt_ep->execute([$persona_id, $admin_evento_id]);
+                if ($stmt_ep->fetch()) {
+                    $_SESSION['flash']['err'] = 'El participante ya está inscrito en este evento.';
+                } else {
+                    $pdo->prepare("INSERT IGNORE INTO evento_participantes (evento_id, persona_id, activo) VALUES (?, ?, 1)")
+                        ->execute([$admin_evento_id, $persona_id]);
+                    $_SESSION['flash']['ok'] = 'Participante asociado correctamente a este evento.';
+                }
             }
+        } else {
+            $_SESSION['flash']['err'] = 'Documento y nombre son obligatorios.';
         }
         header('Location: admin.php?tab=participantes');
         exit;
@@ -383,30 +409,62 @@ if ($tab === 'participantes') {
     // Importar CSV
     if (isset($_FILES['archivo_csv']) && $_FILES['archivo_csv']['error'] === 0) {
         $handle = fopen($_FILES['archivo_csv']['tmp_name'], 'r');
-        $importados = 0;
-        $errores_csv = 0;
-        $primera = true;
+        $cnt_nuevos    = 0;  // creados desde cero
+        $cnt_asociados = 0;  // ya existían en otro evento, ahora asociados aquí
+        $cnt_dupes     = 0;  // ya estaban en este evento → ignorados
+        $cnt_errores   = 0;
+        $primera       = true;
+
         while (($fila = fgetcsv($handle, 1000, ';')) !== false) {
-            if ($primera) {
-                $primera = false;
-                continue;
-            } // saltar encabezado
-            if (count($fila) >= 2) {
-                $doc = trim($fila[0]);
-                $nom = trim($fila[1]);
-                if ($doc && $nom) {
-                    try {
-                        $stmt = $pdo->prepare("INSERT IGNORE INTO participantes (documento, nombre) VALUES (?, ?)");
-                        $stmt->execute([$doc, $nom]);
-                        $importados++;
-                    } catch (PDOException $e) {
-                        $errores_csv++;
+            if ($primera) { $primera = false; continue; } // saltar encabezado
+            if (count($fila) < 2) continue;
+            $doc = trim($fila[0]);
+            $nom = trim($fila[1]);
+            if (!$doc || !$nom) continue;
+
+            try {
+                $stmt_chk = $pdo->prepare("SELECT id FROM participantes WHERE documento = ? LIMIT 1");
+                $stmt_chk->execute([$doc]);
+                $row_exist = $stmt_chk->fetch();
+
+                if (!$row_exist) {
+                    // Nuevo: crear en participantes + personas + evento_participantes
+                    $pdo->prepare("INSERT INTO participantes (documento, nombre) VALUES (?, ?)")
+                        ->execute([$doc, $nom]);
+                    $new_id = (int) $pdo->lastInsertId();
+                    $pdo->prepare("INSERT IGNORE INTO personas (id, documento, nombre) VALUES (?, ?, ?)")
+                        ->execute([$new_id, $doc, $nom]);
+                    $pdo->prepare("INSERT IGNORE INTO evento_participantes (evento_id, persona_id, activo) VALUES (?, ?, 1)")
+                        ->execute([$admin_evento_id, $new_id]);
+                    $cnt_nuevos++;
+                } else {
+                    $persona_id = (int) $row_exist['id'];
+                    $stmt_ep = $pdo->prepare(
+                        "SELECT id FROM evento_participantes WHERE persona_id = ? AND evento_id = ? LIMIT 1"
+                    );
+                    $stmt_ep->execute([$persona_id, $admin_evento_id]);
+                    if ($stmt_ep->fetch()) {
+                        // Ya inscripto en este evento → duplicado
+                        $cnt_dupes++;
+                    } else {
+                        // Existe en otro evento → asociar al activo
+                        $pdo->prepare("INSERT IGNORE INTO evento_participantes (evento_id, persona_id, activo) VALUES (?, ?, 1)")
+                            ->execute([$admin_evento_id, $persona_id]);
+                        $cnt_asociados++;
                     }
                 }
+            } catch (PDOException $e) {
+                $cnt_errores++;
             }
         }
         fclose($handle);
-        $_SESSION['flash']['ok'] = "CSV importado: $importados participantes agregados.";
+
+        $partes = [];
+        if ($cnt_nuevos)    $partes[] = "$cnt_nuevos nuevo(s)";
+        if ($cnt_asociados) $partes[] = "$cnt_asociados asociado(s) a este evento";
+        if ($cnt_dupes)     $partes[] = "$cnt_dupes ya inscripto(s) en este evento";
+        if ($cnt_errores)   $partes[] = "$cnt_errores error(es)";
+        $_SESSION['flash']['ok'] = 'CSV importado: ' . (implode(', ', $partes) ?: 'sin cambios') . '.';
         header('Location: admin.php?tab=participantes');
         exit;
     }
